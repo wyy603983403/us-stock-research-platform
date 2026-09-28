@@ -22,6 +22,7 @@ usr-audit-ohlcv = "us_stock_research.quality.ohlcv:main"
 usr-validate-research = "us_stock_research.research.contracts:main"
 usr-snapshot = "us_stock_research.research.snapshots:main"
 usr-backtest = "us_stock_research.research.backtest:main"
+usr-compare-brokers = "us_stock_research.research.broker_compare:main"
 usr-assess-research = "us_stock_research.research.promotion:main"
 
 [tool.setuptools.packages.find]

@@ -16,7 +16,16 @@ from typing import Any
 
 import httpx
 
-from us_stock_research.bars import DailyBar, merge_bars, read_bars, symbol_path, write_bars
+from us_stock_research.bars import (
+    DailyBar,
+    dividends_path,
+    merge_bars,
+    read_bars,
+    read_dividends,
+    symbol_path,
+    write_bars,
+    write_dividends,
+)
 from us_stock_research.config import load_settings
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -57,7 +66,21 @@ def parse_chart(payload: dict[str, Any]) -> list[DailyBar]:
     return bars
 
 
-def fetch_symbol(client: httpx.Client, symbol: str, start: date, end: date) -> list[DailyBar]:
+def parse_dividends(payload: dict[str, Any]) -> dict[date, float]:
+    """Cash dividends per share keyed by ex-date (exchange-local)."""
+    result = payload["chart"]["result"][0]
+    offset = int(result.get("meta", {}).get("gmtoffset", 0))
+    events = (result.get("events") or {}).get("dividends") or {}
+    out: dict[date, float] = {}
+    for item in events.values():
+        day = datetime.fromtimestamp(int(item["date"]) + offset, tz=UTC).date()
+        out[day] = out.get(day, 0.0) + float(item["amount"])
+    return out
+
+
+def fetch_symbol(
+    client: httpx.Client, symbol: str, start: date, end: date
+) -> tuple[list[DailyBar], dict[date, float]]:
     params: dict[str, str | int] = {
         "period1": int(datetime.combine(start, time.min, tzinfo=UTC).timestamp()),
         "period2": int(datetime.combine(end, time.max, tzinfo=UTC).timestamp()),
@@ -67,7 +90,8 @@ def fetch_symbol(client: httpx.Client, symbol: str, start: date, end: date) -> l
     }
     response = client.get(CHART_URL.format(symbol=symbol.upper()), params=params)
     response.raise_for_status()
-    return parse_chart(response.json())
+    payload = response.json()
+    return parse_chart(payload), parse_dividends(payload)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,11 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         timeout=settings.http_timeout_seconds, headers={"User-Agent": USER_AGENT}
     ) as client:
         for symbol in args.symbols:
-            bars = fetch_symbol(client, symbol, args.start, args.end)
+            bars, dividends = fetch_symbol(client, symbol, args.start, args.end)
             path: Path = symbol_path(settings.data_dir, symbol)
             item: dict[str, Any] = {
                 "symbol": symbol.upper(),
                 "rows": len(bars),
+                "dividends": len(dividends),
                 "first": bars[0].day.isoformat() if bars else None,
                 "last": bars[-1].day.isoformat() if bars else None,
                 "path": str(path),
@@ -96,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.execute and bars:
                 existing = read_bars(path) if path.exists() else []
                 write_bars(path, merge_bars(existing, bars))
+                div_path = dividends_path(settings.data_dir, symbol)
+                old_divs = read_dividends(div_path) if div_path.exists() else {}
+                write_dividends(div_path, old_divs | dividends)
                 item["written"] = True
             summary.append(item)
     print(json.dumps({"dry_run": not args.execute, "symbols": summary}, indent=2))

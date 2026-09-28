@@ -1,0 +1,22 @@
+# 券商成本场景（用于回测敏感性对比，不代表开户建议）。
+# 数字来自公开资料，2026-09 核对；以券商官网最新收费为准，变更时改这里并在 docs/ 记录。
+brokers:
+  schwab_international:
+    label: 嘉信国际账户
+    commission_bps: 0            # 美股/ETF 网上交易零佣金
+    per_share_usd: 0
+    min_per_order_usd: 0
+    dividend_withholding_rate: 0.10   # 填 W-8BEN 按中美税收协定
+  ibkr_fixed:
+    label: 盈透（固定费率）
+    commission_bps: 0
+    per_share_usd: 0.005         # 每股 0.005 美元
+    min_per_order_usd: 1.0       # 每单最低 1 美元
+    max_pct_of_value: 0.01       # 每单最高成交额 1%
+    dividend_withholding_rate: 0.10
+  binance_us_stocks:
+    label: 币安美股（经 Alpaca）
+    commission_bps: 10           # 平台费 0.10%
+    per_share_usd: 0
+    min_per_order_usd: 0.35      # 每单最低 0.35 USDC
+    dividend_withholding_rate: 0.30   # 报道称按非居民标准税率 30%

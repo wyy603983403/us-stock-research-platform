@@ -48,7 +48,19 @@ usr-backtest --contract research/etf-trend-baseline/study.yml --output artifacts
 usr-assess-research --contract research/etf-trend-baseline/study.yml --artifact artifacts/etf_trend_baseline/backtest.json
 ```
 
-也可用 `scripts/run_baseline.sh` 一次完成第 1–3 步。
+也可用 `scripts/run_baseline.sh` 一次完成第 1–3 步；Mac 首次使用运行 `bash scripts/mac_bootstrap.sh`（推送、建环境、测试、取数、快照一步到位）。
+
+### 券商成本对比
+
+`configs/brokers.yml` 登记了嘉信国际、盈透固定费率、币安美股三种成本（佣金、每单最低、每股费用、股息预扣税）。
+同一研究合同、同一快照，只换成本模型：
+
+```bash
+usr-compare-brokers --contract research/etf-trend-baseline/study.yml \
+  --portfolio-usd 10000 100000 --output artifacts/etf_trend_baseline/brokers.json
+```
+
+股息预扣税按分红除权日扣减（需要采集器保存的 `*.dividends.csv`）；基准 SPY 同样扣税，保证对比公平。
 
 本地验证：`pytest && ruff check . && ruff format --check . && mypy src`
 

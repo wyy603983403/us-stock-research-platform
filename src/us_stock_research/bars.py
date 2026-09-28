@@ -70,6 +70,30 @@ def read_bars(path: Path) -> list[DailyBar]:
         ]
 
 
+def dividends_path(data_dir: Path, symbol: str) -> Path:
+    return data_dir / "daily" / f"{symbol.upper()}.dividends.csv"
+
+
+def write_dividends(path: Path, dividends: dict[date, float]) -> None:
+    """Cash dividends per share keyed by ex-date (``date,amount``)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".csv.tmp")
+    with tmp.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(("date", "amount"))
+        for d in sorted(dividends):
+            writer.writerow([d.isoformat(), repr(dividends[d])])
+    tmp.replace(path)
+
+
+def read_dividends(path: Path) -> dict[date, float]:
+    with path.open(newline="") as fh:
+        reader = csv.DictReader(fh)
+        if tuple(reader.fieldnames or ()) != ("date", "amount"):
+            raise ValueError(f"{path}: unexpected header {reader.fieldnames}")
+        return {date.fromisoformat(r["date"]): float(r["amount"]) for r in reader}
+
+
 def merge_bars(existing: list[DailyBar], new: list[DailyBar]) -> list[DailyBar]:
     """Idempotent upsert keyed by date; newer download wins (adjustments can be restated)."""
     by_day = {b.day: b for b in existing}

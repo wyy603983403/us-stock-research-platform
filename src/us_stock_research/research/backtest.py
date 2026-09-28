@@ -2,8 +2,11 @@
 
 Timing: signals use closes up to the rebalance day (last common trading day of the month);
 trades fill at the close ``execution_lag_days`` later and earn returns from the next day.
-Costs are ``transaction_cost_bps`` on one-way turnover. Parameters come from the contract only;
-there is no optimisation here, so every reported window is out of sample for the rule.
+Costs: ``transaction_cost_bps`` (spread/slippage) on every traded dollar, plus an optional
+broker scenario (commission with per-order minimum, per-share fee, dividend withholding tax)
+applied to a notional portfolio size. Without a broker scenario results are gross of commission
+and tax. Parameters come from the contract only; there is no optimisation here, so every reported
+window is out of sample for the rule.
 """
 
 from __future__ import annotations
@@ -13,32 +16,85 @@ import json
 import random
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from us_stock_research.bars import DailyBar
 from us_stock_research.research.contracts import StudyContract, load_contract
-from us_stock_research.research.snapshots import load_snapshot
+from us_stock_research.research.snapshots import Bundle, load_snapshot
 
 TRADING_DAYS = 252
 CASH = "__CASH__"  # zero-return cash when no cash_symbol is declared
 
 
 @dataclass(frozen=True)
+class BrokerCosts:
+    """Commission and tax model of one broker. Fee per order =
+    max(min_per_order_usd, commission_bps * value + per_share_usd * shares), capped at
+    max_pct_of_value * value when that cap is set."""
+
+    name: str
+    commission_bps: float = 0.0
+    per_share_usd: float = 0.0
+    min_per_order_usd: float = 0.0
+    max_pct_of_value: float | None = None
+    dividend_withholding_rate: float = 0.0
+
+    def order_fee(self, value_usd: float, price: float) -> float:
+        if value_usd <= 0:
+            return 0.0
+        shares = value_usd / price if price > 0 else 0.0
+        fee = max(
+            self.min_per_order_usd,
+            self.commission_bps / 10_000 * value_usd + self.per_share_usd * shares,
+        )
+        if self.max_pct_of_value is not None:
+            fee = min(fee, self.max_pct_of_value * value_usd)
+        return fee
+
+
+GROSS = BrokerCosts(name="gross")
+
+
+@dataclass(frozen=True)
 class Panel:
     days: list[date]
     prices: dict[str, list[float]]  # adj_close aligned to ``days``
+    closes: dict[str, list[float]]  # raw close (order sizing, dividend yield)
+    div_yield: dict[str, list[float]]  # cash dividend on day t / raw close on day t-1
 
 
-def align(bars: dict[str, list[DailyBar]], start: date, end: date) -> Panel:
-    maps = {s: {b.day: b.adj_close for b in rows} for s, rows in bars.items()}
+def align(bundle: Bundle, start: date, end: date) -> Panel:
+    bars = {k.upper(): v for k, v in bundle.bars.items()}
+    maps = {s: {b.day: b for b in rows} for s, rows in bars.items()}
     common = set.intersection(*(set(m) for m in maps.values()))
     days = sorted(d for d in common if start <= d <= end)
     if len(days) < 2:
         raise ValueError("fewer than two common trading days in the study window")
-    return Panel(days=days, prices={s: [m[d] for d in days] for s, m in maps.items()})
+    closes = {s: [m[d].close for d in days] for s, m in maps.items()}
+    div_yield: dict[str, list[float]] = {}
+    for s in maps:
+        divs = {k: v for k, v in bundle.dividends.get(s, {}).items() if start <= k <= end}
+        series = [0.0] * len(days)
+        pos = {d: i for i, d in enumerate(days)}
+        for ex_day, amount in divs.items():
+            # ex-dates missing from the common calendar roll to the next common day
+            i = pos.get(ex_day)
+            if i is None:
+                later = [j for j, d in enumerate(days) if d > ex_day]
+                if not later:
+                    continue
+                i = later[0]
+            if i > 0:
+                series[i] += amount / closes[s][i - 1]
+        div_yield[s] = series
+    return Panel(
+        days=days,
+        prices={s: [m[d].adj_close for d in days] for s, m in maps.items()},
+        closes=closes,
+        div_yield=div_yield,
+    )
 
 
 def month_end_indices(days: list[date]) -> list[int]:
@@ -79,15 +135,32 @@ def target_weights(c: StudyContract, panel: Panel, i: int) -> dict[str, float]:
     return {k: v for k, v in weights.items() if v > 0}
 
 
-def _ret(panel: Panel, sym: str, t: int) -> float:
+def _ret(panel: Panel, sym: str, t: int, withholding: float = 0.0) -> float:
+    """Adjusted (dividends reinvested) return, minus the tax withheld on that day's dividend."""
     if sym == CASH:
         return 0.0
     series = panel.prices[sym]
-    return series[t] / series[t - 1] - 1.0
+    return series[t] / series[t - 1] - 1.0 - withholding * panel.div_yield[sym][t]
 
 
-def simulate(c: StudyContract, panel: Panel) -> tuple[list[float], list[int], float]:
-    """Returns (daily equity from first fill, day index of each equity point, total turnover)."""
+@dataclass
+class CostLedger:
+    commission_usd: float = 0.0
+    slippage_usd: float = 0.0
+    orders: int = 0
+
+
+def simulate(
+    c: StudyContract,
+    panel: Panel,
+    broker: BrokerCosts = GROSS,
+    portfolio_usd: float = 100_000.0,
+    ledger: CostLedger | None = None,
+) -> tuple[list[float], list[int], float]:
+    """Returns (daily equity from first fill, day index of each equity point, total turnover).
+
+    Equity starts at 1.0 = ``portfolio_usd``; fees are converted to fractions of current equity.
+    """
     p = c.parameters
     need = max(p.sma_days, p.lookback_days, c.validation.warmup_days)
     rebal = [i for i in month_end_indices(panel.days) if i >= need]
@@ -97,7 +170,9 @@ def simulate(c: StudyContract, panel: Panel) -> tuple[list[float], list[int], fl
     if not fills:
         raise ValueError("not enough history after warm-up for a single rebalance")
     first = min(fills)
-    cost = p.transaction_cost_bps / 10_000
+    slip = p.transaction_cost_bps / 10_000
+    tax = broker.dividend_withholding_rate
+    book = ledger if ledger is not None else CostLedger()
     holdings: dict[str, float] = {}
     equity = 1.0
     curve: list[float] = []
@@ -105,16 +180,29 @@ def simulate(c: StudyContract, panel: Panel) -> tuple[list[float], list[int], fl
     turnover_total = 0.0
     for t in range(first, len(panel.days)):
         if t > first:
-            gross = sum(w * (1 + _ret(panel, s, t)) for s, w in holdings.items())
+            gross = sum(w * (1 + _ret(panel, s, t, tax)) for s, w in holdings.items())
             if holdings:
-                holdings = {s: w * (1 + _ret(panel, s, t)) / gross for s, w in holdings.items()}
+                holdings = {
+                    s: w * (1 + _ret(panel, s, t, tax)) / gross for s, w in holdings.items()
+                }
             equity *= gross if holdings else 1.0
         if t in fills:
             target = target_weights(c, panel, fills[t])
             keys = set(target) | set(holdings)
             turnover = sum(abs(target.get(k, 0.0) - holdings.get(k, 0.0)) for k in keys) / 2
             turnover_total += turnover
-            equity *= 1 - cost * 2 * turnover
+            value = equity * portfolio_usd
+            fees = 0.0
+            for k in keys:
+                traded = abs(target.get(k, 0.0) - holdings.get(k, 0.0)) * value
+                if traded < 1e-6 or k == CASH:
+                    continue
+                commission = broker.order_fee(traded, panel.closes[k][t])
+                book.commission_usd += commission
+                book.slippage_usd += slip * traded
+                book.orders += 1
+                fees += commission + slip * traded
+            equity *= 1 - fees / value
             holdings = target
         curve.append(equity)
         idx.append(t)
@@ -215,13 +303,31 @@ def git_sha() -> str | None:
         return None
 
 
-def run_backtest(c: StudyContract, bars: dict[str, list[DailyBar]]) -> dict[str, Any]:
-    panel = align({k.upper(): v for k, v in bars.items()}, c.data.start, c.data.end)
-    curve, idx, turnover = simulate(c, panel)
+def benchmark_curve(
+    panel: Panel, sym: str, idx: list[int], broker: BrokerCosts, portfolio_usd: float
+) -> list[float]:
+    """Buy and hold the benchmark once (one order), net of the same dividend withholding."""
+    first_fee = broker.order_fee(portfolio_usd, panel.closes[sym][idx[0]]) / portfolio_usd
+    equity = 1.0 - first_fee
+    out = [equity]
+    for t in idx[1:]:
+        equity *= 1 + _ret(panel, sym, t, broker.dividend_withholding_rate)
+        out.append(equity)
+    return out
+
+
+def run_backtest(
+    c: StudyContract,
+    bundle: Bundle,
+    broker: BrokerCosts = GROSS,
+    portfolio_usd: float = 100_000.0,
+) -> dict[str, Any]:
+    panel = align(bundle, c.data.start, c.data.end)
+    ledger = CostLedger()
+    curve, idx, turnover = simulate(c, panel, broker, portfolio_usd, ledger)
     days = [panel.days[i] for i in idx]
     bench_sym = c.benchmark.symbol.upper()
-    base = panel.prices[bench_sym][idx[0]]
-    bench = [panel.prices[bench_sym][i] / base for i in idx]
+    bench = benchmark_curve(panel, bench_sym, idx, broker, portfolio_usd)
     strat_m, bench_m = monthly_returns(curve, days), monthly_returns(bench, days)
     excess = [a - b for a, b in zip(strat_m, bench_m, strict=True)]
     inf = c.inference
@@ -231,6 +337,10 @@ def run_backtest(c: StudyContract, bars: dict[str, list[DailyBar]]) -> dict[str,
         "snapshot_id": c.data.snapshot_id,
         "git_sha": git_sha(),
         "parameters": c.parameters.model_dump(),
+        "broker": asdict(broker),
+        "portfolio_usd": portfolio_usd,
+        "costs": asdict(ledger),
+        "dividend_data": any(any(v) for v in panel.div_yield.values()),
         "strategy_metrics": metrics(curve, days) | {"turnover_one_way_total": turnover},
         "benchmark": {"symbol": bench_sym, "metrics": metrics(bench, days)},
         "walk_forward": walk_forward_windows(curve, days, c.validation.test_months),
@@ -251,8 +361,8 @@ def main(argv: list[str] | None = None) -> int:
     contract = load_contract(args.contract)
     if not contract.data.snapshot_id:
         parser.error("contract has no data.snapshot_id; create and record a snapshot first")
-    bars = load_snapshot(contract.data.snapshot_id, args.snapshots_dir)
-    result = run_backtest(contract, bars)
+    bundle = load_snapshot(contract.data.snapshot_id, args.snapshots_dir)
+    result = run_backtest(contract, bundle)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result["strategy_metrics"], indent=2))
