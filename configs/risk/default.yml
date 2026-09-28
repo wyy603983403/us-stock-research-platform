@@ -1,0 +1,8 @@
+trading_enabled: false
+# 本金优先：任意滚动 12 个月亏损不得超过本金的 25%
+max_worst_12m_loss: 0.25
+# 最大回撤只报告、不设硬上限
+max_drawdown: null
+max_single_asset_weight: 0.35
+min_oos_months: 120
+require_human_approval: true

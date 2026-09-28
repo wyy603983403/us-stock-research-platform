@@ -1,0 +1,7 @@
+# 数据源登记：每个研究合同必须引用这里登记过的来源
+sources:
+  yahoo_chart:
+    kind: daily_ohlcv_adjusted
+    url: https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
+    official: false
+    notes: 非官方接口，适合原型研究；关键区间晋级前须用第二来源复核（如 Stooq、Tiingo、券商导出）
