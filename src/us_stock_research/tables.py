@@ -77,3 +77,17 @@ class TableStore:
         finally:
             con.close()
         return rows
+
+    def aggregate(self, kind: str, select: str) -> tuple[Any, ...] | None:
+        """One aggregate row over every file of ``kind`` (e.g. ``count(*), min(ts)``)."""
+        if not self.keys(kind):
+            return None
+        pattern = str(self.root / "parquet" / kind / "*.parquet").replace("'", "''")
+        con = self._duckdb().connect()
+        try:
+            row: tuple[Any, ...] | None = con.execute(
+                f"SELECT {select} FROM read_parquet('{pattern}')"
+            ).fetchone()
+        finally:
+            con.close()
+        return row

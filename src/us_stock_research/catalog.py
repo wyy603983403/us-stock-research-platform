@@ -23,6 +23,7 @@ from us_stock_research.tables import TableStore
 
 KIND_BY_UNIVERSE = {"etf_core": "etf", "macro_indices": "macro", "mega_caps": "stock"}
 FRESH_DAYS = 5  # weekends and holidays
+INTRADAY_KINDS = {"intraday_1min_alpaca": "Alpaca IEX", "intraday_1min": "Tiingo IEX"}
 SCHEMA = {
     "symbol": "VARCHAR",
     "kind": "VARCHAR",
@@ -85,7 +86,10 @@ def build_rows(
 
 
 def render_markdown(
-    rows: list[dict[str, Any]], macro: dict[str, tuple[date, int]], fundamentals: list[str]
+    rows: list[dict[str, Any]],
+    macro: dict[str, tuple[date, int]],
+    fundamentals: list[str],
+    intraday: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     by_kind: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -120,6 +124,19 @@ def render_markdown(
     lines.append(
         ", ".join(fundamentals) if fundamentals else "尚未下载（见 usr-collect-fundamentals）"
     )
+    if intraday:
+        lines += [
+            "",
+            "## 分钟线（仅 IEX 单一交易所：价格可用，成交量不代表全市场；未复权）",
+            "",
+            "| 来源 | 标的数 | 最早 | 最新 | 总根数 | 占用 |",
+            "|---|---:|---|---|---:|---:|",
+        ]
+        for label, info in intraday.items():
+            lines.append(
+                f"| {label} | {info['symbols']} | {info['first']} | {info['last']} "
+                f"| {info['bars']:,} | {info['size_mb']:,.0f} MB |"
+            )
     sectors: dict[str, int] = {}
     for r in rows:
         if r["sector"]:
@@ -143,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     sp500: dict[str, tuple[str, str]] = {}
     macro: dict[str, tuple[date, int]] = {}
     fundamentals: list[str] = []
+    intraday: dict[str, dict[str, Any]] = {}
     if tables:
         if tables.has("meta", "sp500"):
             for symbol, name, sector in tables.read("meta", "sp500", "symbol, name, sector"):
@@ -151,6 +169,17 @@ def main(argv: list[str] | None = None) -> int:
             ((last, n),) = tables.read("macro", sid, "max(date), count(*)")
             macro[sid] = (last, n)
         fundamentals = tables.keys("fundamentals")
+        for kind, label in INTRADAY_KINDS.items():
+            agg = tables.aggregate(kind, "count(*), min(ts), max(ts)")
+            if agg:
+                files = list((tables.root / "parquet" / kind).glob("*.parquet"))
+                intraday[label] = {
+                    "symbols": len(files),
+                    "bars": agg[0],
+                    "first": agg[1].date(),
+                    "last": agg[2].date(),
+                    "size_mb": sum(f.stat().st_size for f in files) / 1e6,
+                }
     quality: dict[str, tuple[int, int]] = {}
     if args.quality.exists():
         for r in json.loads(args.quality.read_text())["reports"]:
@@ -172,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             "kind, symbol",
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    text = render_markdown(rows, macro, fundamentals)
+    text = render_markdown(rows, macro, fundamentals, intraday)
     args.output.write_text(text)
     print(text)
     return 0

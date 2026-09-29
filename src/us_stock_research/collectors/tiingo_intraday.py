@@ -217,7 +217,11 @@ def collect_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Download Tiingo IEX minute bars (resumable).")
     parser.add_argument("symbols", nargs="+")
     parser.add_argument("--start", type=date.fromisoformat, default=date(2017, 1, 1))
-    parser.add_argument("--end", type=date.fromisoformat, default=datetime.now(UTC).date())
+    parser.add_argument(
+        "--end",
+        type=date.fromisoformat,
+        default=datetime.now(UTC).date() - timedelta(days=1),  # never store a half-finished day
+    )
     parser.add_argument("--freq", default="1min")
     parser.add_argument("--pause", type=float, default=2.0)
     parser.add_argument("--report", type=Path)

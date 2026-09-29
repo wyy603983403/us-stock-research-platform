@@ -14,7 +14,7 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +121,11 @@ def collect_main(argv: list[str] | None = None) -> int:
         "--all-stored", action="store_true", help="every symbol that has daily bars stored"
     )
     parser.add_argument("--start", type=date.fromisoformat, default=date(2020, 7, 27))
-    parser.add_argument("--end", type=date.fromisoformat, default=datetime.now(UTC).date())
+    parser.add_argument(
+        "--end",
+        type=date.fromisoformat,
+        default=datetime.now(UTC).date() - timedelta(days=1),  # never store a half-finished day
+    )
     parser.add_argument("--pause", type=float, default=0.3)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
