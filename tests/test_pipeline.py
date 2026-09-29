@@ -356,3 +356,15 @@ def test_report_input_is_built_from_artifact(data_dir: Path, tmp_path: Path) -> 
     assert len(strategy) == len(benchmark) == len(result["equity_curve"]["dates"]) - 1
     with pytest.raises(ValueError):
         returns_from_artifact({})
+
+
+def test_tiingo_parse_and_adjusted_comparison() -> None:
+    from conftest import synthetic_bars
+
+    from us_stock_research.quality.crosscheck import compare, parse_tiingo
+
+    bars = synthetic_bars(date(2024, 1, 2), 50, 0.001, 0.01, 0.0)
+    rows = [{"date": f"{b.day.isoformat()}T00:00:00.000Z", "adjClose": b.adj_close} for b in bars]
+    other = parse_tiingo(rows)
+    assert other[bars[0].day] == bars[0].adj_close
+    assert compare(bars, other, adjusted=True)["passed"]

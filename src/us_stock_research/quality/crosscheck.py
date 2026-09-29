@@ -51,8 +51,10 @@ def parse_close_csv(text: str) -> dict[date, float]:
     return out
 
 
-def compare(primary: list[DailyBar], other: dict[date, float]) -> dict[str, Any]:
-    mine = {b.day: b.close for b in primary}
+def compare(
+    primary: list[DailyBar], other: dict[date, float], adjusted: bool = False
+) -> dict[str, Any]:
+    mine = {b.day: (b.adj_close if adjusted else b.close) for b in primary}
     common = sorted(set(mine) & set(other))
     lo, hi = (common[0], common[-1]) if common else (None, None)
     window_mine = {d for d in mine if lo and hi and lo <= d <= hi}
@@ -90,6 +92,29 @@ def fetch_stooq(client: httpx.Client, symbol: str, apikey: str | None) -> dict[d
     return parse_close_csv(response.text)
 
 
+TIINGO_URL = "https://api.tiingo.com/tiingo/daily/{symbol}/prices"
+TIINGO_HELP = (
+    "Tiingo needs a free API token: register at https://www.tiingo.com (email only), copy the "
+    "token from the account page and put TIINGO_TOKEN=<token> in .env"
+)
+
+
+def parse_tiingo(rows: list[dict[str, Any]]) -> dict[date, float]:
+    """Tiingo daily rows -> {date: adjClose} (split- and dividend-adjusted)."""
+    return {date.fromisoformat(r["date"][:10]): float(r["adjClose"]) for r in rows}
+
+
+def fetch_tiingo(client: httpx.Client, symbol: str, token: str | None) -> dict[date, float]:
+    if not token:
+        raise ValueError(TIINGO_HELP)
+    response = client.get(
+        TIINGO_URL.format(symbol=symbol.lower()),
+        params={"startDate": "2000-01-01", "format": "json", "token": token},
+    )
+    response.raise_for_status()
+    return parse_tiingo(response.json())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="+")
@@ -97,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--file", action="append", default=[], metavar="SYMBOL=PATH", help="second-source CSV"
     )
+    parser.add_argument("--source", choices=("tiingo", "stooq"), default="tiingo")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     settings = settings_from_args(args)  # also loads .env into the environment
@@ -107,12 +133,14 @@ def main(argv: list[str] | None = None) -> int:
         for symbol in args.symbols:
             key = symbol.upper()
             try:
-                other = (
-                    parse_close_csv(Path(files[key]).read_text())
-                    if key in files
-                    else fetch_stooq(client, symbol, os.environ.get("STOOQ_APIKEY"))
-                )
-                reports[key] = compare(store.read_bars(symbol), other)
+                adjusted = args.source == "tiingo" and key not in files
+                if key in files:
+                    other = parse_close_csv(Path(files[key]).read_text())
+                elif args.source == "tiingo":
+                    other = fetch_tiingo(client, symbol, os.environ.get("TIINGO_TOKEN"))
+                else:
+                    other = fetch_stooq(client, symbol, os.environ.get("STOOQ_APIKEY"))
+                reports[key] = compare(store.read_bars(symbol), other, adjusted)
             except (httpx.HTTPError, ValueError, OSError) as exc:
                 reports[key] = {"passed": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
     out = {"passed": all(r["passed"] for r in reports.values()), "symbols": reports}

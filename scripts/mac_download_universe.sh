@@ -39,7 +39,7 @@ bad = [x for x in r if x["errors"]]
 print(f"已入库 {len(r)} 只；有错误 {len(bad)} 只：", [x["symbol"] for x in bad][:20])
 PY
 du -sh "$(grep '^USR_STORAGE_ROOT=' .env | cut -d= -f2-)" 2>/dev/null || true
-echo "== 第二数据源交叉验证（Stooq，核心 ETF） =="
+echo "== 第二数据源交叉验证（Tiingo，核心 ETF；需 .env 里有 TIINGO_TOKEN） =="
 .venv/bin/usr-crosscheck SPY QQQ IWM EFA IEF GLD SHY --output artifacts/quality/crosscheck.json \
   >/dev/null && echo "交叉验证通过" || echo "交叉验证未通过或取不到数据，详见 artifacts/quality/crosscheck.json"
 echo "完成。回到 Claude 说一声，我来检查结果。"
