@@ -530,3 +530,66 @@ def test_tiingo_iex_parse() -> None:
     rows = [{"date": "2024-06-03T13:30:00.000Z", "open": 1, "high": 2, "low": 0.5, "close": 1.5}]
     bar = parse_iex(rows)[0]
     assert bar["ts"].hour == 13 and bar["volume"] == 0.0 and bar["close"] == 1.5
+
+
+def test_intraday_year_chunks_and_resume_and_rate_limit(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from us_stock_research.collectors import tiingo_intraday as ti
+
+    assert ti.year_chunks(date(2023, 12, 30), date(2025, 1, 2)) == [
+        (date(2023, 12, 30), date(2023, 12, 31)),
+        (date(2024, 1, 1), date(2024, 12, 31)),
+        (date(2025, 1, 1), date(2025, 1, 2)),
+    ]
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.data: dict[str, list[tuple[Any, ...]]] = {}
+
+        def has(self, kind: str, key: str) -> bool:
+            return key in self.data
+
+        def read(self, kind: str, key: str, columns: str = "*") -> list[tuple[Any, ...]]:
+            return self.data[key]
+
+        def write(self, kind: str, key: str, schema: Any, columns: Any, order_by: str) -> None:
+            self.data[key] = list(zip(*columns, strict=True))
+
+    calls: list[tuple[str, date, date]] = []
+
+    def bar(d: date) -> dict[str, Any]:
+        ts = datetime(d.year, d.month, d.day, 14, 30, tzinfo=UTC)
+        return {"ts": ts, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0}
+
+    def fetch(sym: str, a: date, b: date) -> list[dict[str, Any]]:
+        calls.append((sym, a, b))
+        if sym == "BAD":
+            raise ti.RateLimited("quota")
+        return [bar(a)]
+
+    store = FakeStore()
+    out = ti.download_intraday(
+        ["AAA", "BAD", "CCC"],
+        store,
+        fetch,
+        date(2024, 6, 1),
+        date(2025, 3, 1),
+        execute=True,
+        pause=0,
+        sleep=lambda _s: None,
+    )
+    assert out["stopped_by_rate_limit"] and "BAD" in out["stopped_by_rate_limit"]
+    assert "CCC" not in store.data and len(store.data["AAA"]) == 2
+    calls.clear()
+    ti.download_intraday(
+        ["AAA"],
+        store,
+        fetch,
+        date(2024, 6, 1),
+        date(2025, 3, 1),
+        execute=True,
+        pause=0,
+        sleep=lambda _s: None,
+    )
+    assert calls == [("AAA", date(2025, 1, 1), date(2025, 3, 1))]
