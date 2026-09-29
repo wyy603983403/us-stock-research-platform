@@ -92,7 +92,8 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
         # difference means a split/spin-off was applied to one series but not the other.
         if abs(ret - raw) > MAX_ADJUSTMENT_MISMATCH:
             price_issues.append(
-                f"{cur.day}: adjusted vs raw return differ ({ret:+.1%} vs {raw:+.1%})"
+                f"{cur.day}: adjusted vs raw return differ ({ret:+.1%} vs {raw:+.1%}); "
+                "review for a spin-off or special distribution"
             )
     if not macro:
         _check_calendar(report, bars)
