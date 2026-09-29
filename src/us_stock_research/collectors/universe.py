@@ -43,7 +43,7 @@ def to_yahoo(symbol: str) -> str:
 
 def load_universe(path: Path) -> list[str]:
     raw = yaml.safe_load(path.read_text())
-    symbols = [to_yahoo(s) if not s.startswith(("^",)) else s for s in raw["symbols"]]
+    symbols = [str(s) for s in raw["symbols"]]  # already in Yahoo notation (BRK-B, ^GSPC)
     if len(symbols) != len(set(symbols)):
         raise ValueError(f"duplicate symbols in {path}")
     return symbols

@@ -244,7 +244,7 @@ def test_macro_series_price_issues_are_warnings() -> None:
     from conftest import synthetic_bars
 
     bars = synthetic_bars(date(2020, 1, 1), 3, 0.0, 0.0, 0.0)
-    bars[1] = DailyBar(bars[1].day, 10.0, 12.0, 9.0, 10.0, 10.0, 0)  # -90% jump
+    bars[1] = DailyBar(bars[1].day, 10.0, 12.0, 9.0, 10.0, 5.0, 0)  # adj differs from raw
     assert audit_bars("SPY", bars).errors
     report = audit_bars("^VIX", bars)
     assert not report.errors and report.warnings
@@ -323,3 +323,10 @@ def test_trial_registry_counts_distinct_parameter_sets(tmp_path: Path) -> None:
     assert record_and_assess(path, artifact(100, 1.0), ["A"])["trials_registered"] == 1
     assert record_and_assess(path, artifact(100, 1.0), ["A"])["trials_registered"] == 1
     assert record_and_assess(path, artifact(200, 1.5), ["A"])["trials_registered"] == 2
+
+
+def test_real_crash_is_a_warning_not_an_error() -> None:
+    a = DailyBar(date(2024, 1, 2), 100, 101, 99, 100, 100, 1)
+    b = DailyBar(date(2024, 1, 3), 50, 51, 49, 50, 50, 1)  # -50% but adj == raw
+    report = audit_bars("AAPL", [a, b])
+    assert not report.errors and any("large adjusted move" in w for w in report.warnings)

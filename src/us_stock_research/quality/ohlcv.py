@@ -19,6 +19,7 @@ from us_stock_research.storage import add_store_args, open_store, settings_from_
 
 MAX_CALENDAR_GAP_DAYS = 5  # e.g. Thu close -> Tue open around a holiday = 5
 MAX_ABS_DAILY_RETURN = 0.40
+MAX_ADJUSTMENT_MISMATCH = 0.15
 
 
 @dataclass
@@ -78,11 +79,21 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
             report.errors.append(f"{cur.day}: duplicate or out-of-order date")
             continue
         gap = (cur.day - prev.day).days
-        if gap > MAX_CALENDAR_GAP_DAYS:
+        if macro and gap > MAX_CALENDAR_GAP_DAYS:
             report.warnings.append(f"{prev.day}->{cur.day}: {gap}-day calendar gap")
-        ret = cur.adj_close / prev.adj_close - 1.0 if prev.adj_close > 0 else 0.0
+        if prev.adj_close <= 0 or prev.close <= 0:
+            continue
+        ret = cur.adj_close / prev.adj_close - 1.0
+        raw = cur.close / prev.close - 1.0
+        # Real single-day crashes/spikes happen (earnings, 2008); they are flagged, not rejected.
         if abs(ret) > MAX_ABS_DAILY_RETURN:
-            price_issues.append(f"{cur.day}: adjusted return {ret:+.1%} exceeds limit")
+            report.warnings.append(f"{cur.day}: large adjusted move {ret:+.1%}")
+        # Split-adjusted close and adjusted close may only differ by dividend size. A big
+        # difference means a split/spin-off was applied to one series but not the other.
+        if abs(ret - raw) > MAX_ADJUSTMENT_MISMATCH:
+            price_issues.append(
+                f"{cur.day}: adjusted vs raw return differ ({ret:+.1%} vs {raw:+.1%})"
+            )
     if not macro:
         _check_calendar(report, bars)
     for b in bars:
