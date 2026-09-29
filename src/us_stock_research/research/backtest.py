@@ -348,6 +348,11 @@ def run_backtest(
         "walk_forward": walk_forward_windows(curve, days, c.validation.test_months),
         "oos_months": len(strat_m),
         "strategy_monthly_returns": strat_m,
+        "equity_curve": {
+            "dates": [d.isoformat() for d in days],
+            "strategy": curve,
+            "benchmark": bench,
+        },
         "inference": block_bootstrap(
             excess, inf.resamples, inf.block_size_months, inf.confidence_level, c.random_seed
         ),

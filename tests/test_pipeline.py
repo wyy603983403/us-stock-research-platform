@@ -330,3 +330,29 @@ def test_real_crash_is_a_warning_not_an_error() -> None:
     b = DailyBar(date(2024, 1, 3), 50, 51, 49, 50, 50, 1)  # -50% but adj == raw
     report = audit_bars("AAPL", [a, b])
     assert not report.errors and any("large adjusted move" in w for w in report.warnings)
+
+
+@pytest.mark.parametrize("strategy", ["trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1"])
+def test_independent_engine_matches_production(
+    data_dir: Path, tmp_path: Path, strategy: str
+) -> None:
+    pytest.importorskip("pandas")
+    from us_stock_research.research.verify_engine import verify
+
+    sid = create_snapshot(data_dir, ["SPY", "QQQ", "IEF", "SHY"], tmp_path / "snaps")
+    c = contract(strategy=strategy, data__snapshot_id=sid)
+    result = verify(c, load_snapshot(sid, tmp_path / "snaps"))
+    assert result["passed"], result
+
+
+def test_report_input_is_built_from_artifact(data_dir: Path, tmp_path: Path) -> None:
+    pytest.importorskip("pandas")
+    from us_stock_research.research.report import returns_from_artifact
+
+    sid = create_snapshot(data_dir, ["SPY", "QQQ", "IEF", "SHY"], tmp_path / "snaps")
+    c = contract(data__snapshot_id=sid)
+    result = run_backtest(c, load_snapshot(sid, tmp_path / "snaps"))
+    strategy, benchmark = returns_from_artifact(result)
+    assert len(strategy) == len(benchmark) == len(result["equity_curve"]["dates"]) - 1
+    with pytest.raises(ValueError):
+        returns_from_artifact({})

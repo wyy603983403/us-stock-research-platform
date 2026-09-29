@@ -14,13 +14,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy>=1.10", "pytest>=8", "ruff>=0.5", "types-PyYAML>=6", "duckdb>=1.1,<2"]
+dev = ["mypy>=1.10", "pytest>=8", "ruff>=0.5", "types-PyYAML>=6", "duckdb>=1.1,<2", "pandas>=2"]
+verify = ["pandas>=2"]
+report = ["quantstats>=0.0.62", "pandas>=2"]
 storage = ["duckdb>=1.1,<2"]
 
 [project.scripts]
 usr-collect-daily = "us_stock_research.collectors.yahoo_daily:main"
 usr-collect-universe = "us_stock_research.collectors.universe:main"
 usr-crosscheck = "us_stock_research.quality.crosscheck:main"
+usr-verify-engine = "us_stock_research.research.verify_engine:main"
+usr-report = "us_stock_research.research.report:main"
 usr-audit-ohlcv = "us_stock_research.quality.ohlcv:main"
 usr-validate-research = "us_stock_research.research.contracts:main"
 usr-snapshot = "us_stock_research.research.snapshots:main"

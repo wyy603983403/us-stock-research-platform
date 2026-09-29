@@ -104,6 +104,9 @@ bash scripts/mac_download_universe.sh sp500    # 另加标普 500
   比对 Stooq（或 `--file SPY=path.csv` 提供任意来源）的收盘日收益，容差 0.5 个百分点。
 - **多重检验**：每次 `usr-backtest` 把参数组合登记到 `research/trials.jsonl`（进 Git），
   晋级评估使用 Deflated Sharpe：试得越多，门槛越高，需 ≥ 0.95。
+- **引擎自检**：`usr-verify-engine` 用 pandas 独立重写三种策略的净值逻辑，与生产引擎逐日对比
+  （真实 ETF 数据上三种策略差异 < 1e-14）。
+- **报告**：`usr-report` 用 quantstats 生成收益、回撤、月度热力图 HTML；`bash scripts/mac_report.sh` 一步完成。
 - **幸存者偏差**：合同字段 `data.universe_kind`；`stocks_current_constituents` 永远不能晋级。
 
 自动化交易的分阶段路线见 [docs/trading-roadmap.md](docs/trading-roadmap.md)。
