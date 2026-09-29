@@ -21,6 +21,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from us_stock_research.config import load_settings
 from us_stock_research.research.contracts import StudyContract, load_contract
 from us_stock_research.research.snapshots import Bundle, load_snapshot
 
@@ -355,13 +356,15 @@ def run_backtest(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, required=True)
-    parser.add_argument("--snapshots-dir", type=Path, default=Path("artifacts/snapshots"))
+    parser.add_argument("--snapshots-dir", type=Path, help="default: <storage root>/snapshots")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     contract = load_contract(args.contract)
     if not contract.data.snapshot_id:
         parser.error("contract has no data.snapshot_id; create and record a snapshot first")
-    bundle = load_snapshot(contract.data.snapshot_id, args.snapshots_dir)
+    bundle = load_snapshot(
+        contract.data.snapshot_id, args.snapshots_dir or load_settings().snapshots_dir
+    )
     result = run_backtest(contract, bundle)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")

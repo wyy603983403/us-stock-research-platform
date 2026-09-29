@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy>=1.10", "pytest>=8", "ruff>=0.5", "types-PyYAML>=6"]
+dev = ["mypy>=1.10", "pytest>=8", "ruff>=0.5", "types-PyYAML>=6", "duckdb>=1.1,<2"]
+storage = ["duckdb>=1.1,<2"]
 
 [project.scripts]
 usr-collect-daily = "us_stock_research.collectors.yahoo_daily:main"

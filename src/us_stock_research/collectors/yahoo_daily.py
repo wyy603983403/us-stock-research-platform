@@ -11,22 +11,13 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, date, datetime, time
-from pathlib import Path
 from typing import Any
 
 import httpx
 
-from us_stock_research.bars import (
-    DailyBar,
-    dividends_path,
-    merge_bars,
-    read_bars,
-    read_dividends,
-    symbol_path,
-    write_bars,
-    write_dividends,
-)
+from us_stock_research.bars import DailyBar, merge_bars
 from us_stock_research.config import load_settings
+from us_stock_research.storage import open_store
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 USER_AGENT = "Mozilla/5.0 (research; us-stock-research-platform)"
@@ -99,31 +90,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("symbols", nargs="+", help="tickers, e.g. SPY QQQ IEF")
     parser.add_argument("--start", type=date.fromisoformat, default=date(2005, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=datetime.now(UTC).date())
-    parser.add_argument("--execute", action="store_true", help="write CSVs (default: dry run)")
+    parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     args = parser.parse_args(argv)
     settings = load_settings()
+    store = open_store(settings)
     summary: list[dict[str, Any]] = []
     with httpx.Client(
         timeout=settings.http_timeout_seconds, headers={"User-Agent": USER_AGENT}
     ) as client:
         for symbol in args.symbols:
             bars, dividends = fetch_symbol(client, symbol, args.start, args.end)
-            path: Path = symbol_path(settings.data_dir, symbol)
             item: dict[str, Any] = {
                 "symbol": symbol.upper(),
                 "rows": len(bars),
                 "dividends": len(dividends),
                 "first": bars[0].day.isoformat() if bars else None,
                 "last": bars[-1].day.isoformat() if bars else None,
-                "path": str(path),
+                "path": store.location(symbol),
                 "written": False,
             }
             if args.execute and bars:
-                existing = read_bars(path) if path.exists() else []
-                write_bars(path, merge_bars(existing, bars))
-                div_path = dividends_path(settings.data_dir, symbol)
-                old_divs = read_dividends(div_path) if div_path.exists() else {}
-                write_dividends(div_path, old_divs | dividends)
+                existing = store.read_bars(symbol) if store.has_bars(symbol) else []
+                store.write_bars(symbol, merge_bars(existing, bars))
+                old_divs = store.read_dividends(symbol) if store.has_dividends(symbol) else {}
+                store.write_dividends(symbol, old_divs | dividends)
                 item["written"] = True
             summary.append(item)
     print(json.dumps({"dry_run": not args.execute, "symbols": summary}, indent=2))

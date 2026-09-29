@@ -23,6 +23,15 @@ from us_stock_research.bars import (
     read_bars,
     read_dividends,
     symbol_path,
+    write_bars,
+    write_dividends,
+)
+from us_stock_research.storage import (
+    BarStore,
+    CsvStore,
+    add_store_args,
+    open_store,
+    settings_from_args,
 )
 
 PREFIX = "daily-bundle-v1:sha256:"
@@ -44,29 +53,37 @@ def bundle_digest(file_hashes: dict[str, str]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def create_snapshot(data_dir: Path, symbols: list[str], snapshots_dir: Path) -> str:
-    sources: dict[str, Path] = {}
-    for s in symbols:
-        sym = s.upper()
-        sources[sym] = symbol_path(data_dir, sym)
-        div = dividends_path(data_dir, sym)
-        if div.exists():
-            sources[sym + DIV_SUFFIX] = div
-    missing = [k for k, p in sources.items() if not p.exists()]
-    if missing:
-        raise FileNotFoundError(f"missing daily CSVs for {missing}")
-    hashes = {k: file_sha256(p) for k, p in sources.items()}
-    digest = bundle_digest(hashes)
-    target = snapshots_dir / digest
-    if not target.exists():
-        tmp = snapshots_dir / f".{digest}.tmp"
-        shutil.rmtree(tmp, ignore_errors=True)
-        (tmp / "daily").mkdir(parents=True)
-        for key, src in sources.items():
-            shutil.copy2(src, tmp / "daily" / f"{key}.csv")
-        manifest = {"snapshot_id": PREFIX + digest, "files": hashes}
-        (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        tmp.rename(target)
+def create_snapshot(source: Path | BarStore, symbols: list[str], snapshots_dir: Path) -> str:
+    """Snapshot ``symbols`` from a CSV directory or any bar store.
+
+    Files are always re-written in the canonical CSV layout before hashing, so the id depends
+    only on the data itself, never on the storage format it was read from.
+    """
+    store: BarStore = CsvStore(source) if isinstance(source, Path) else source
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    staging = snapshots_dir / f".staging-{hashlib.sha256(str(symbols).encode()).hexdigest()[:12]}"
+    shutil.rmtree(staging, ignore_errors=True)
+    (staging / "daily").mkdir(parents=True)
+    try:
+        missing = [s.upper() for s in symbols if not store.has_bars(s)]
+        if missing:
+            raise FileNotFoundError(f"missing daily data for {missing}")
+        hashes: dict[str, str] = {}
+        for s in symbols:
+            sym = s.upper()
+            write_bars(symbol_path(staging, sym), store.read_bars(sym))
+            hashes[sym] = file_sha256(staging / "daily" / f"{sym}.csv")
+            if store.has_dividends(sym):
+                write_dividends(dividends_path(staging, sym), store.read_dividends(sym))
+                hashes[sym + DIV_SUFFIX] = file_sha256(staging / "daily" / f"{sym}{DIV_SUFFIX}.csv")
+        digest = bundle_digest(hashes)
+        target = snapshots_dir / digest
+        if not target.exists():
+            manifest = {"snapshot_id": PREFIX + digest, "files": hashes}
+            (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+            staging.rename(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return PREFIX + digest
 
 
@@ -96,10 +113,12 @@ def load_snapshot(snapshot_id: str, snapshots_dir: Path) -> Bundle:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="+")
-    parser.add_argument("--data-dir", type=Path, default=Path("data"))
-    parser.add_argument("--snapshots-dir", type=Path, default=Path("artifacts/snapshots"))
+    add_store_args(parser)
+    parser.add_argument("--snapshots-dir", type=Path, help="default: <storage root>/snapshots")
     args = parser.parse_args(argv)
-    print(create_snapshot(args.data_dir, args.symbols, args.snapshots_dir))
+    settings = settings_from_args(args)
+    snapshots_dir = args.snapshots_dir or settings.snapshots_dir
+    print(create_snapshot(open_store(settings), args.symbols, snapshots_dir))
     return 0
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from us_stock_research.config import load_settings
 from us_stock_research.research.backtest import GROSS, BrokerCosts, run_backtest
 from us_stock_research.research.contracts import StudyContract, load_contract
 from us_stock_research.research.snapshots import Bundle, load_snapshot
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--brokers", type=Path, default=Path("configs/brokers.yml"))
-    parser.add_argument("--snapshots-dir", type=Path, default=Path("artifacts/snapshots"))
+    parser.add_argument("--snapshots-dir", type=Path, help="default: <storage root>/snapshots")
     parser.add_argument("--portfolio-usd", type=float, nargs="+", default=[10_000, 100_000])
     parser.add_argument("--output", type=Path, required=True, help="JSON path; .md written too")
     args = parser.parse_args(argv)
@@ -87,7 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     brokers, labels = load_brokers(args.brokers)
     rows = compare(
         contract,
-        load_snapshot(contract.data.snapshot_id, args.snapshots_dir),
+        load_snapshot(
+            contract.data.snapshot_id, args.snapshots_dir or load_settings().snapshots_dir
+        ),
         brokers,
         args.portfolio_usd,
     )

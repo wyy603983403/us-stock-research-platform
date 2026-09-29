@@ -6,6 +6,9 @@
 - 第一份研究合同草案：`research/etf-trend-baseline/study.yml`。
 - 合成数据测试覆盖全流程。
 
+- 存储层：CSV / Parquet 二选一（`USR_STORAGE_ROOT`），快照按内容生成，两种格式编号一致。
+- 券商成本对比（`configs/brokers.yml`、`usr-compare-brokers`）。
+
 ## 下一步
 
 1. 在 Mac 上建 Python 3.11 虚拟环境并安装：`pip install -e '.[dev]'`，跑 `pytest`。

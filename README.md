@@ -64,6 +64,23 @@ usr-compare-brokers --contract research/etf-trend-baseline/study.yml \
 
 本地验证：`pytest && ruff check . && ruff format --check . && mypy src`
 
+## 数据存储：CSV 或 Parquet
+
+默认把日线存成 `data/daily/*.csv`。在 `.env` 里设置 `USR_STORAGE_ROOT` 后，改为 zstd 压缩的
+Parquet（用 DuckDB 读写），并把数据快照也放到同一根目录下：
+
+```text
+<USR_STORAGE_ROOT>/parquet/daily/SPY.parquet
+<USR_STORAGE_ROOT>/parquet/dividends/SPY.parquet
+<USR_STORAGE_ROOT>/snapshots/<sha256>/
+```
+
+例如放到外置数据卷：`USR_STORAGE_ROOT=/Volumes/mysql/duckdb-pilot/us-stock-research`（Mac 上
+`mac_bootstrap.sh` 检测到 `/Volumes/mysql/duckdb-pilot` 时会自动写入 `.env`）。
+两种格式内容完全相同、浮点数无损往返，快照编号只取决于数据本身，所以换格式不会让已冻结研究合同失效。
+当前 7 只 ETF 的数据只有几 MB，Parquet 的意义主要在于和系统盘隔离；扩展到几百只个股或分钟线后才明显省空间。
+卷没挂载时，取数和回测会直接报路径错误，不会悄悄写到别处。
+
 ## 已内置策略
 
 | 名称 | 规则 |

@@ -13,7 +13,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from us_stock_research.bars import DailyBar, read_bars, symbol_path
+from us_stock_research.bars import DailyBar
+from us_stock_research.storage import add_store_args, open_store, settings_from_args
 
 MAX_CALENDAR_GAP_DAYS = 5  # e.g. Thu close -> Tue open around a holiday = 5
 MAX_ABS_DAILY_RETURN = 0.40
@@ -71,13 +72,13 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="+")
-    parser.add_argument("--data-dir", type=Path, default=Path("data"))
+    add_store_args(parser)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    store = open_store(settings_from_args(args))
     reports: list[dict[str, object]] = []
     for symbol in args.symbols:
-        path = symbol_path(args.data_dir, symbol)
-        bars = read_bars(path) if path.exists() else []
+        bars = store.read_bars(symbol) if store.has_bars(symbol) else []
         reports.append(audit_bars(symbol, bars).to_dict())
     out = {"passed": all(r["passed"] for r in reports), "reports": reports}
     text = json.dumps(out, indent=2)

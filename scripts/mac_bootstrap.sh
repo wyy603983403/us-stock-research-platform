@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Mac 一键初始化：推送到 GitHub → 建 Python 虚拟环境 → 跑测试 → 下载 ETF 日线与分红
-# → 质量门禁 → 生成快照。可重复运行（已存在的步骤会跳过或幂等覆盖）。
+# Mac 一键初始化：推送到 GitHub → 选择存储位置 → 建 Python 虚拟环境 → 跑测试 → 下载 ETF 日线
+# 与分红 → 质量门禁 → 生成快照。可重复运行（已存在的步骤会跳过或幂等覆盖）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +9,20 @@ if git ls-remote --exit-code origin main >/dev/null 2>&1; then
   git push origin main || echo "推送失败（远端有新提交？）— 先 git pull --rebase 再推"
 else
   git push -u origin main
+fi
+
+echo "== 数据存储位置 =="
+[ -f .env ] || cp .env.example .env
+STORAGE_DEFAULT="/Volumes/mysql/duckdb-pilot/us-stock-research"
+if ! grep -q '^USR_STORAGE_ROOT=' .env && [ -d /Volumes/mysql/duckdb-pilot ]; then
+  # 外置数据卷已挂载：数据放 Parquet，不占系统盘。删掉 .env 里这一行即回到本地 CSV。
+  mkdir -p "$STORAGE_DEFAULT"
+  printf 'USR_STORAGE_ROOT=%s\n' "$STORAGE_DEFAULT" >> .env
+fi
+if grep -q '^USR_STORAGE_ROOT=' .env; then
+  echo "Parquet 存储：$(grep '^USR_STORAGE_ROOT=' .env | cut -d= -f2-)"
+else
+  echo "CSV 存储：$PWD/data（未检测到 /Volumes/mysql 数据卷）"
 fi
 
 echo "== 2/5 Python 虚拟环境 =="
