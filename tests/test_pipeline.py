@@ -522,3 +522,11 @@ def test_reviewed_exceptions_and_quarantine(tmp_path: Path) -> None:
     accepted, quarantine = load_exceptions(cfg)
     assert accepted == {"XYZ": {"2024-01-03": "r"}} and quarantine == {"BAD": "reason"}
     assert load_exceptions(tmp_path / "missing.yml") == ({}, {})
+
+
+def test_tiingo_iex_parse() -> None:
+    from us_stock_research.collectors.tiingo_intraday import parse_iex
+
+    rows = [{"date": "2024-06-03T13:30:00.000Z", "open": 1, "high": 2, "low": 0.5, "close": 1.5}]
+    bar = parse_iex(rows)[0]
+    assert bar["ts"].hour == 13 and bar["volume"] == 0.0 and bar["close"] == 1.5
