@@ -10,7 +10,9 @@ accepted:
   EFX: [{date: "2001-07-09", reason: "分拆（ChoicePoint），Tiingo 一致"}]
   EWT: [{date: "2022-12-13", reason: "基金资本利得分配，Tiingo 一致"}]
   FIS: [{date: "2008-07-03", reason: "分拆（Metavante），Tiingo 一致"}]
-  GEN: [{date: "2016-03-04", reason: "特别分红，Tiingo 一致"}]
+  GEN:
+    - {date: "2016-03-04", reason: "特别分红，Tiingo 一致"}
+    - {date: "2020-02-03", reason: "12 美元特别分红，Tiingo 最大差异仅 2.7 个百分点，一致"}
   GNRC: [{date: "2012-07-02", reason: "特别分红，Tiingo 相差 3.7 个百分点，方向一致"}]
   DPZ: [{date: "2007-05-07", reason: "特别分红，Tiingo 相差 1.7 个百分点"}]
   HUBB: [{date: "2021-05-05", reason: "当日最高/最低价不一致；按收盘价的收益与 Tiingo 一致"}]
