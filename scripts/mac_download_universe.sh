@@ -14,7 +14,7 @@ ARGS=()
 [ "${REFRESH:-0}" = "1" ] && ARGS+=(--refresh)
 
 mkdir -p artifacts/universe
-.venv/bin/usr-collect-universe "${UNIVERSES[@]}" "${ARGS[@]}" --start 2000-01-01 --execute \
+.venv/bin/usr-collect-universe "${UNIVERSES[@]}" ${ARGS[@]+"${ARGS[@]}"} --start 2000-01-01 --execute \
   --report artifacts/universe/last_download.json | tail -n 25 || echo "部分标的失败，详见 artifacts/universe/last_download.json（重跑即可补下）"
 
 echo "== 质量门禁 =="
