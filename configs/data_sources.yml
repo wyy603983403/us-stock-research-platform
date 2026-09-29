@@ -5,3 +5,18 @@ sources:
     url: https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
     official: false
     notes: 非官方接口，适合原型研究；关键区间晋级前须用第二来源复核（如 Stooq、Tiingo、券商导出）
+  fred_csv:
+    kind: macro_series
+    url: https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}
+    official: true
+    notes: 美联储圣路易斯分行；部分序列（如 CPI）会修订历史，每次更新整段重下
+  sec_companyfacts:
+    kind: fundamentals_point_in_time
+    url: https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json
+    official: true
+    notes: 官方 XBRL；保留披露日（filed）以按"当时已知"取值，避免未来函数；需在 User-Agent 里留联系方式
+  sp500_constituents_csv:
+    kind: security_master
+    url: https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv
+    official: false
+    notes: 仅当前成分股，无历史变更；有幸存者偏差

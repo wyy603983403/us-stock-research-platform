@@ -29,6 +29,7 @@ from us_stock_research.bars import DailyBar, merge_bars
 from us_stock_research.collectors.yahoo_daily import USER_AGENT, fetch_symbol
 from us_stock_research.config import load_settings
 from us_stock_research.storage import BarStore, open_store
+from us_stock_research.tables import TableStore
 
 SP500_URL = (
     "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
@@ -54,7 +55,31 @@ def parse_sp500_csv(text: str) -> list[str]:
     return sorted({to_yahoo(r["Symbol"]) for r in rows if r.get("Symbol")})
 
 
-def resolve(names: list[str], universes_dir: Path, client: httpx.Client | None) -> list[str]:
+SP500_META_SCHEMA = {
+    "symbol": "VARCHAR",
+    "name": "VARCHAR",
+    "sector": "VARCHAR",
+    "sub_industry": "VARCHAR",
+    "date_added": "VARCHAR",
+    "cik": "VARCHAR",
+}
+
+
+def parse_sp500_meta(text: str) -> list[list[str]]:
+    """Column lists for the security master: symbol, name, sector, sub-industry, added, CIK."""
+    rows = [r for r in csv.DictReader(io.StringIO(text)) if r.get("Symbol")]
+    fields = ("Symbol", "Security", "GICS Sector", "GICS Sub-Industry", "Date added", "CIK")
+    columns = [[(r.get(f) or "").strip() for r in rows] for f in fields]
+    columns[0] = [to_yahoo(s) for s in columns[0]]
+    return columns
+
+
+def resolve(
+    names: list[str],
+    universes_dir: Path,
+    client: httpx.Client | None,
+    meta: list[str] | None = None,
+) -> list[str]:
     out: list[str] = []
     for name in names:
         if name == "sp500":
@@ -63,6 +88,8 @@ def resolve(names: list[str], universes_dir: Path, client: httpx.Client | None) 
             response = client.get(SP500_URL)
             response.raise_for_status()
             out.extend(parse_sp500_csv(response.text))
+            if meta is not None:
+                meta.append(response.text)
         else:
             out.extend(load_universe(universes_dir / f"{name}.yml"))
     return list(dict.fromkeys(out))
@@ -130,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         headers={"User-Agent": USER_AGENT},
         follow_redirects=True,
     ) as client:
-        symbols = resolve(args.universes, args.universes_dir, client)
+        sp500_text: list[str] = []
+        symbols = resolve(args.universes, args.universes_dir, client, sp500_text)
         summary = download(
             symbols,
             store,
@@ -140,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
             execute=args.execute,
             refresh=args.refresh,
             pause=args.pause,
+        )
+    if sp500_text and args.execute and settings.storage_root is not None:
+        TableStore(settings.storage_root).write(
+            "meta", "sp500", SP500_META_SCHEMA, parse_sp500_meta(sp500_text[0]), "symbol"
         )
     summary = {"dry_run": not args.execute, "requested": len(symbols), **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)

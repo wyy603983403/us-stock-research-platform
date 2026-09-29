@@ -97,6 +97,19 @@ bash scripts/mac_download_universe.sh sp500    # 另加标普 500
 个股研究需要含退市股的历史成分数据（另行采购或建库）。指数、收益率、期货不是可交易价格，
 质量门禁对它们的价格异常只给警告。
 
+## 数据基座
+
+| 层 | 内容 | 来源 | 位置 |
+|---|---|---|---|
+| 价格 | 日线 OHLCV、复权价、分红（ETF、指数、大盘股、标普 500） | Yahoo（交叉验证 Tiingo） | `parquet/daily`, `parquet/dividends` |
+| 宏观 | 国债收益率、利差、CPI、失业率、VIX、美元指数等 14 个序列 | FRED | `parquet/macro` |
+| 基本面 | 营收、利润、资产负债、现金流、EPS、股本；带披露日 | SEC EDGAR | `parquet/fundamentals` |
+| 证券主表 | 类型、名称、行业、区间、新鲜度、质量状态 | 本地生成 | `parquet/meta` + `artifacts/catalog.md` |
+
+一键：`bash scripts/mac_data_foundation.sh`；数据目录：`usr-catalog`。
+基本面用 `point_in_time(rows, tag, 日期)` 取"该日已披露"的数值，避免用到事后才公布/修订的数据。
+已知缺口：退市股与历史成分股（幸存者偏差）、分钟线、期权、拆股事件表。
+
 ## 每日增量更新
 
 ```bash

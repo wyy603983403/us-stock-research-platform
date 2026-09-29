@@ -413,3 +413,94 @@ def test_incremental_update_appends_and_detects_restatement(tmp_path: Path) -> N
     assert [r["symbol"] for r in out["refreshed"]] == ["AAA"]
     assert store.read_bars("AAA")[0].adj_close == pytest.approx(full[0].adj_close * 0.99)
     assert store.symbols() == ["AAA"]
+
+
+def test_fred_sec_sp500_parsers_and_point_in_time() -> None:
+    from us_stock_research.collectors.fred import parse_fredgraph
+    from us_stock_research.collectors.sec_fundamentals import (
+        parse_companyfacts,
+        point_in_time,
+        ticker_map,
+    )
+    from us_stock_research.collectors.universe import parse_sp500_meta
+
+    days, values = parse_fredgraph(
+        "observation_date,DGS10\n2024-01-02,3.95\n2024-01-03,.\n2024-01-04,4.0\n"
+    )
+    assert days == [date(2024, 1, 2), date(2024, 1, 4)] and values == [3.95, 4.0]
+    with pytest.raises(ValueError):
+        parse_fredgraph("<html>blocked</html>")
+
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [
+                            {
+                                "end": "2023-12-31",
+                                "val": 100,
+                                "filed": "2024-02-01",
+                                "form": "10-K",
+                            },
+                            {
+                                "end": "2023-12-31",
+                                "val": 101,
+                                "filed": "2024-06-01",
+                                "form": "10-K/A",
+                            },
+                            {
+                                "end": "2024-03-31",
+                                "val": 120,
+                                "filed": "2024-05-01",
+                                "form": "10-Q",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    rows = parse_companyfacts(payload)
+    assert len(rows) == 3
+    assert point_in_time(rows, "Assets", date(2024, 1, 1)) is None  # not yet filed
+    assert point_in_time(rows, "Assets", date(2024, 3, 1))["value"] == 100
+    assert point_in_time(rows, "Assets", date(2024, 5, 15))["value"] == 120
+    assert point_in_time(rows, "Assets", date(2024, 12, 1))["value"] == 120  # newest period wins
+    assert ticker_map({"0": {"cik_str": 320193, "ticker": "aapl", "title": "Apple"}}) == {
+        "AAPL": 320193
+    }
+    text = (
+        "Symbol,Security,GICS Sector,GICS Sub-Industry,Date added,CIK\n"
+        "BRK.B,Berkshire,Financials,Multi,1976,1067983\n"
+    )
+    cols = parse_sp500_meta(text)
+    assert cols[0] == ["BRK-B"] and cols[2] == ["Financials"] and cols[5] == ["1067983"]
+
+
+def test_catalog_rows_and_markdown(tmp_path: Path) -> None:
+    from conftest import synthetic_bars
+
+    from us_stock_research.catalog import build_rows, render_markdown
+    from us_stock_research.storage import CsvStore
+
+    store = CsvStore(tmp_path)
+    store.write_bars("SPY", synthetic_bars(date(2024, 1, 2), 30, 0.001, 0.01, 0.0))
+    store.write_bars("ZZZ", synthetic_bars(date(2024, 1, 2), 30, 0.001, 0.01, 0.0))
+    store.write_dividends("SPY", {date(2024, 1, 10): 1.0})
+    rows = build_rows(
+        store,
+        {"SPY": "etf"},
+        date(2024, 6, 1),
+        {"ZZZ": ("Zed Corp", "Industrials")},
+        {"SPY": (1, 0)},
+    )
+    by = {r["symbol"]: r for r in rows}
+    assert (
+        by["SPY"]["kind"] == "etf"
+        and by["SPY"]["dividends"] == 1
+        and by["SPY"]["quality_errors"] == 1
+    )
+    assert by["ZZZ"]["kind"] == "stock" and by["ZZZ"]["sector"] == "Industrials"
+    md = render_markdown(rows, {"DGS10": (date(2024, 5, 1), 100)}, ["AAPL"])
+    assert "DGS10" in md and "SPY" in md and "Industrials" in md
