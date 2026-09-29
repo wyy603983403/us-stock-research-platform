@@ -372,3 +372,44 @@ def test_tiingo_parse_and_adjusted_comparison() -> None:
     other = parse_tiingo(rows)
     assert other[bars[0].day] == bars[0].adj_close
     assert compare(bars, other, adjusted=True)["passed"]
+
+
+def test_incremental_update_appends_and_detects_restatement(tmp_path: Path) -> None:
+    from conftest import synthetic_bars
+
+    from us_stock_research.collectors.update import plan, run_update
+    from us_stock_research.storage import CsvStore
+
+    full = synthetic_bars(date(2024, 1, 2), 80, 0.001, 0.01, 0.0)
+    store = CsvStore(tmp_path)
+    store.write_bars("AAA", full[:60])
+    store.write_dividends("AAA", {})
+
+    def fetch_same(symbol: str, start: date, end: date):  # type: ignore[no-untyped-def]
+        return [b for b in full if b.day >= start], {}
+
+    out = run_update(
+        ["AAA"], store, fetch_same, date(2025, 1, 1), date(2000, 1, 1),
+        execute=True, pause=0.0, sleep=lambda _: None,
+    )  # fmt: skip
+    assert out["appended_days"] == 20 and not out["refreshed"]
+    assert len(store.read_bars("AAA")) == 80
+
+    # A dividend restates history: every adjusted close before it is scaled by 0.99.
+    restated = [
+        DailyBar(b.day, b.open, b.high, b.low, b.close, b.adj_close * 0.99, b.volume) for b in full
+    ]
+    assert plan(full, restated[-5:])[0] == "refresh"
+    assert plan(full, full[-5:])[0] == "append"
+    assert plan(full[:10], full[-5:])[0] == "refresh"  # no overlap
+
+    def fetch_restated(symbol: str, start: date, end: date):  # type: ignore[no-untyped-def]
+        return [b for b in restated if b.day >= start], {}
+
+    out = run_update(
+        ["AAA"], store, fetch_restated, date(2025, 1, 1), date(2000, 1, 1),
+        execute=True, pause=0.0, sleep=lambda _: None,
+    )  # fmt: skip
+    assert [r["symbol"] for r in out["refreshed"]] == ["AAA"]
+    assert store.read_bars("AAA")[0].adj_close == pytest.approx(full[0].adj_close * 0.99)
+    assert store.symbols() == ["AAA"]

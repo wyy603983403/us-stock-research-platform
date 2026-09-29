@@ -40,6 +40,7 @@ class BarStore(Protocol):
     def read_dividends(self, symbol: str) -> dict[date, float]: ...
     def write_dividends(self, symbol: str, dividends: dict[date, float]) -> None: ...
     def location(self, symbol: str) -> str: ...
+    def symbols(self) -> list[str]: ...
 
 
 class CsvStore:
@@ -66,6 +67,10 @@ class CsvStore:
 
     def location(self, symbol: str) -> str:
         return str(symbol_path(self.data_dir, symbol))
+
+    def symbols(self) -> list[str]:
+        folder = self.data_dir / "daily"
+        return sorted(p.stem for p in folder.glob("*.csv") if not p.name.endswith(".dividends.csv"))
 
 
 def _quote(path: Path) -> str:
@@ -163,6 +168,9 @@ class ParquetStore:
 
     def location(self, symbol: str) -> str:
         return str(self._daily(symbol))
+
+    def symbols(self) -> list[str]:
+        return sorted(p.stem for p in (self.root / "parquet" / "daily").glob("*.parquet"))
 
 
 def open_store(settings: Settings) -> BarStore:

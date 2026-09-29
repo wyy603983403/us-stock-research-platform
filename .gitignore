@@ -19,3 +19,4 @@ artifacts/*
 *.parquet
 *.log
 .DS_Store
+logs/
