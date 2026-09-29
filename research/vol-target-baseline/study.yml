@@ -1,0 +1,56 @@
+schema_version: 1
+name: vol_target_baseline
+status: frozen
+strategy: vol_target_v1
+question: 对同一批 ETF 使用波动率目标（10% 年化，60 日实现波动）而不是趋势开关，能否把最差 12 个月亏损压到 25% 以内，同时长期收益比趋势策略更接近
+  SPY？
+hypothesis: 波动率聚集：高波动期风险资产回撤更大，按实现波动缩减仓位可降低尾部亏损，且平稳期保持满仓，避免趋势策略震荡市的来回止损。
+data:
+  provider: yahoo_chart
+  source_url: https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
+  universe:
+  - SPY
+  - QQQ
+  - IWM
+  - EFA
+  - IEF
+  - GLD
+  - SHY
+  start: '2005-01-01'
+  end: '2025-12-31'
+  snapshot_id: daily-bundle-v1:sha256:43eeb58b8611a88d00bdde5c4a438b1a1951e2c2b75efca599b931673d9d6d3a
+  quality_report: artifacts/quality/etf_trend_baseline.json
+parameters:
+  sma_days: 200
+  lookback_days: 252
+  top_k: 1
+  vol_target: 0.1
+  vol_lookback_days: 60
+  cash_symbol: SHY
+  transaction_cost_bps: 5
+  execution_lag_days: 1
+benchmark:
+  symbol: SPY
+inference:
+  method: moving_block_bootstrap_mean_excess_v1
+  resamples: 2000
+  block_size_months: 6
+  confidence_level: 0.95
+validation:
+  method: walk_forward
+  warmup_days: 252
+  test_months: 12
+random_seed: 42
+output: artifacts/vol_target_baseline
+limitations:
+- ETF 名单是事后选定的，存在幸存者与后见之明偏差。
+- Yahoo 复权收盘价为非官方数据，分红与拆股调整可能被事后修改。
+- 成本只含固定基点，不含冲击成本、税费与借贷。
+- 月末信号、次日收盘成交是简化假设，未模拟盘中滑点。
+- 仅在实现波动上升后才减仓，突发跳空（如 2020 年 3 月）无法提前避开。
+- 波动率目标参数（10%、60 日）在看结果前登记，事后改动即为新试验，计入多重检验。
+human_review:
+  required: true
+  approved: false
+  reviewer: null
+  reviewed_at: null

@@ -120,6 +120,21 @@ def target_weights(c: StudyContract, panel: Panel, i: int) -> dict[str, float]:
         for s in risk:
             window = panel.prices[s][i - n + 1 : i + 1]
             add(s if panel.prices[s][i] > sum(window) / n else cash, 1.0 / len(risk))
+    elif c.strategy == "vol_target_v1":
+        # Equal-weight risk basket scaled so its realised volatility hits the target; never
+        # levered (exposure <= 1), the remainder sits in the cash asset.
+        n = p.vol_lookback_days
+        basket = [
+            sum(panel.prices[s][j] / panel.prices[s][j - 1] - 1.0 for s in risk) / len(risk)
+            for j in range(i - n + 1, i + 1)
+        ]
+        mean = sum(basket) / n
+        vol = (sum((r - mean) ** 2 for r in basket) / (n - 1)) ** 0.5 * TRADING_DAYS**0.5
+        exposure = 1.0 if vol <= 0 else min(1.0, p.vol_target / vol)
+        for s in risk:
+            add(s, exposure / len(risk))
+        if exposure < 1.0:
+            add(cash, 1.0 - exposure)
     elif c.strategy == "dual_momentum_v1":
         lb = p.lookback_days
 
@@ -164,7 +179,7 @@ def simulate(
     Equity starts at 1.0 = ``portfolio_usd``; fees are converted to fractions of current equity.
     """
     p = c.parameters
-    need = max(p.sma_days, p.lookback_days, c.validation.warmup_days)
+    need = max(p.sma_days, p.lookback_days, p.vol_lookback_days + 1, c.validation.warmup_days)
     rebal = [i for i in month_end_indices(panel.days) if i >= need]
     fills = {
         i + p.execution_lag_days: i for i in rebal if i + p.execution_lag_days < len(panel.days)

@@ -117,6 +117,7 @@ bash scripts/mac_download_universe.sh sp500    # 另加标普 500
 |---|---|
 | `buy_and_hold_v1` | 风险资产等权，月末再平衡 |
 | `trend_sma_v1` | 每个风险资产：月末收盘高于 N 日均线则持有，否则该份额转入现金资产（如 SHY） |
+| `vol_target_v1` | 风险资产等权组合，按 `vol_lookback_days` 实现波动缩放到 `vol_target` 年化目标，不加杠杆，其余转入现金资产 |
 | `dual_momentum_v1` | 按过去 N 日收益排名取前 k 名，且须跑赢现金资产，否则转入现金 |
 
 回测时点：月末收盘出信号，`execution_lag_days` 天后收盘成交，成本按单边换手 × 基点计。

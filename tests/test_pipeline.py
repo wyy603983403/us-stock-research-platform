@@ -116,7 +116,9 @@ def test_snapshot_is_content_addressed_and_verified(data_dir: Path, tmp_path: Pa
         load_snapshot(sid, snaps)
 
 
-@pytest.mark.parametrize("strategy", ["trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1"])
+@pytest.mark.parametrize(
+    "strategy", ["trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1", "vol_target_v1"]
+)
 def test_backtest_end_to_end(data_dir: Path, tmp_path: Path, strategy: str) -> None:
     symbols = ["SPY", "QQQ", "IEF", "SHY"]
     sid = create_snapshot(data_dir, symbols, tmp_path / "snaps")
@@ -332,7 +334,9 @@ def test_real_crash_is_a_warning_not_an_error() -> None:
     assert not report.errors and any("large adjusted move" in w for w in report.warnings)
 
 
-@pytest.mark.parametrize("strategy", ["trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1"])
+@pytest.mark.parametrize(
+    "strategy", ["trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1", "vol_target_v1"]
+)
 def test_independent_engine_matches_production(
     data_dir: Path, tmp_path: Path, strategy: str
 ) -> None:

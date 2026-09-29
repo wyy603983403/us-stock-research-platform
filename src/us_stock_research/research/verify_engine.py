@@ -38,7 +38,7 @@ def independent_curve(c: StudyContract, bundle: Bundle) -> tuple[list[Any], list
     p = c.parameters
     risk = [s.upper() for s in c.risk_universe()]
     cash = p.cash_symbol.upper() if p.cash_symbol else None
-    need = max(p.sma_days, p.lookback_days, c.validation.warmup_days)
+    need = max(p.sma_days, p.lookback_days, p.vol_lookback_days + 1, c.validation.warmup_days)
     rebalance = [i for i in month_end_indices(panel.days) if i >= need]
     fills = {
         i + p.execution_lag_days: i for i in rebalance if i + p.execution_lag_days < len(prices)
@@ -61,6 +61,14 @@ def independent_curve(c: StudyContract, bundle: Bundle) -> tuple[list[Any], list
         elif c.strategy == "trend_sma_v1":
             for s in risk:
                 add(s if prices[s].iloc[i] > sma[s].iloc[i] else str(cash), 1 / len(risk))
+        elif c.strategy == "vol_target_v1":
+            basket = rets[risk].mean(axis=1)
+            vol = basket.rolling(p.vol_lookback_days).std(ddof=1).iloc[i] * 252**0.5
+            exposure = 1.0 if vol <= 0 else min(1.0, p.vol_target / vol)
+            for s in risk:
+                add(s, exposure / len(risk))
+            if exposure < 1.0:
+                add(str(cash), 1.0 - exposure)
         else:  # dual_momentum_v1
             hurdle = momentum[cash].iloc[i] if cash else 0.0
             ranked = momentum.iloc[i][risk].sort_values(ascending=False).index[: p.top_k]

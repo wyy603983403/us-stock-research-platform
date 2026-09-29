@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 StudyStatus = Literal["draft", "frozen", "rejected", "promoted"]
 UniverseKind = Literal["etf", "macro", "stocks_current_constituents", "stocks_point_in_time"]
-STRATEGIES = ("trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1")
+STRATEGIES = ("trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1", "vol_target_v1")
 
 
 class _Strict(BaseModel):
@@ -49,6 +49,8 @@ class Parameters(_Strict):
     sma_days: int = Field(default=200, ge=20, le=400)
     lookback_days: int = Field(default=252, ge=20, le=504)
     top_k: int = Field(default=1, ge=1)
+    vol_target: float = Field(default=0.10, gt=0, le=0.30)  # annualised, vol_target_v1 only
+    vol_lookback_days: int = Field(default=60, ge=20, le=252)
     cash_symbol: str | None = None
     transaction_cost_bps: float = Field(default=5, ge=0, le=100)
     execution_lag_days: int = Field(default=1, ge=1, le=5)

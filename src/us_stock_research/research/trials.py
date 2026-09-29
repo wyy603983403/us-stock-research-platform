@@ -54,7 +54,12 @@ def deflated_sharpe(stats: dict[str, float], n_trials: int, sharpe_variance: flo
     return NORMAL.cdf((sr - sr0) * math.sqrt(t - 1) / math.sqrt(denom))
 
 
+VOL_PARAMETERS = ("vol_target", "vol_lookback_days")
+
+
 def param_hash(strategy: str, parameters: dict[str, Any], universe: list[str]) -> str:
+    if strategy != "vol_target_v1":  # keep hashes of older studies stable
+        parameters = {k: v for k, v in parameters.items() if k not in VOL_PARAMETERS}
     blob = json.dumps(
         {"strategy": strategy, "parameters": parameters, "universe": sorted(universe)},
         sort_keys=True,
