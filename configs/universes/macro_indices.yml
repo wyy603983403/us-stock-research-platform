@@ -9,6 +9,10 @@ symbols:
   - ^NDX
   # 波动率
   - ^VIX
+  - ^VIX9D   # 9 天期 VIX
+  - ^VIX3M   # 3 个月期 VIX（与 ^VIX 之比衡量期限结构）
+  - ^VIX6M
+  - ^VVIX    # VIX 的波动率
   # 美债收益率
   - ^IRX
   - ^FVX

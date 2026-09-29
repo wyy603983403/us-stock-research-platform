@@ -85,11 +85,40 @@ def build_rows(
     return rows
 
 
+def describe_extras(tables: TableStore) -> list[str]:
+    """One line per auxiliary dataset: splits, factors, S&P history, former-member prices."""
+    out: list[str] = []
+    splits = tables.keys("splits")
+    if splits:
+        agg = tables.aggregate("splits", "count(*)")
+        out.append(
+            f"拆股记录：{len(splits)} 只标的有拆股，共 {agg[0] if agg else 0} 次（2000 年起）"
+        )
+    for name in tables.keys("factors"):
+        ((first, last, n),) = tables.read("factors", name, "min(date), max(date), count(*)")
+        out.append(f"Fama-French 因子 {name}：{n:,} 行，{first} 至 {last}")
+    if tables.has("meta", "sp500_history"):
+        ((n, n_symbols),) = tables.read("meta", "sp500_history", "count(*), count(DISTINCT symbol)")
+        out.append(f"标普 500 历史成分：{n_symbols} 个代码、{n} 段成分期（1996 年起）")
+    if tables.has("meta", "sp500_coverage"):
+        tally: dict[tuple[str, str], int] = {}
+        for st, src in tables.read("meta", "sp500_coverage", "status, source"):
+            tally[(st, src)] = tally.get((st, src), 0) + 1
+        counts = sorted(((st, src, n) for (st, src), n in tally.items()), key=lambda x: -x[2])
+        parts = "，".join(f"{st}/{src} {n}" for st, src, n in counts)
+        out.append(f"2000 年以来成分期价格覆盖：{parts}")
+    delisted = tables.keys("daily_delisted")
+    if delisted:
+        out.append(f"前成分股日线（已剔除/退市）：{len(delisted)} 只")
+    return out
+
+
 def render_markdown(
     rows: list[dict[str, Any]],
     macro: dict[str, tuple[date, int]],
     fundamentals: list[str],
     intraday: dict[str, dict[str, Any]] | None = None,
+    extras: list[str] | None = None,
 ) -> str:
     by_kind: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -137,6 +166,8 @@ def render_markdown(
                 f"| {label} | {info['symbols']} | {info['first']} | {info['last']} "
                 f"| {info['bars']:,} | {info['size_mb']:,.0f} MB |"
             )
+    if extras:
+        lines += ["", "## 其他数据", ""] + [f"- {x}" for x in extras]
     sectors: dict[str, int] = {}
     for r in rows:
         if r["sector"]:
@@ -161,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     macro: dict[str, tuple[date, int]] = {}
     fundamentals: list[str] = []
     intraday: dict[str, dict[str, Any]] = {}
+    extras: list[str] = []
     if tables:
         if tables.has("meta", "sp500"):
             for symbol, name, sector in tables.read("meta", "sp500", "symbol, name, sector"):
@@ -169,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             ((last, n),) = tables.read("macro", sid, "max(date), count(*)")
             macro[sid] = (last, n)
         fundamentals = tables.keys("fundamentals")
+        extras = describe_extras(tables)
         for kind, label in INTRADAY_KINDS.items():
             agg = tables.aggregate(kind, "count(*), min(ts), max(ts)")
             if agg:
@@ -201,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             "kind, symbol",
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    text = render_markdown(rows, macro, fundamentals, intraday)
+    text = render_markdown(rows, macro, fundamentals, intraday, extras)
     args.output.write_text(text)
     print(text)
     return 0

@@ -775,3 +775,129 @@ def test_intraday_source_compare_detects_label_shift() -> None:
     shifted = [(r[0] + timedelta(minutes=1), *r[1:]) for r in a]
     out = qi.compare_sources(a, shifted)
     assert not out["passed"] and any("shifted" in x for x in out["reasons"])
+
+
+def test_parse_splits() -> None:
+    from us_stock_research.collectors.splits import parse_splits
+
+    payload = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"gmtoffset": -14400},
+                    "events": {
+                        "splits": {
+                            "1": {"date": 1598880600, "numerator": 4, "denominator": 1},
+                            "2": {"date": 1402320600, "numerator": 7, "denominator": 1},
+                        }
+                    },
+                }
+            ]
+        }
+    }
+    assert parse_splits(payload) == [(date(2014, 6, 9), 7.0, 1.0), (date(2020, 8, 31), 4.0, 1.0)]
+    assert parse_splits({"chart": {"result": [{"meta": {}}]}}) == []
+
+
+def test_parse_french_factor_files() -> None:
+    from us_stock_research.collectors.factors import parse_french_csv
+
+    daily = (
+        "This file was created by CMPT_ME_BEME_RETS_DAILY using the 202508 CRSP database.\n"
+        "The Tbill return is from Ibbotson and Associates, Inc.\n\n"
+        "              ,Mkt-RF,SMB,HML,RMW,CMA,RF\n"
+        "19630701,   -0.67,    0.02,   -0.35,    0.03,    0.13,    0.012\n"
+        "19630702,    0.79,   -0.28,    0.28,   -0.08,   -0.21,    0.012\n"
+    )
+    header, days, values = parse_french_csv(daily)
+    assert header == ["mkt_rf", "smb", "hml", "rmw", "cma", "rf"]
+    assert days == [date(1963, 7, 1), date(1963, 7, 2)]
+    assert values[0][0] == pytest.approx(-0.0067)
+    monthly = (
+        "Missing data are indicated by -99.99 or -999.\n\n"
+        "          ,Mom   \n"
+        "192701,    0.57\n"
+        "192702,  -99.99\n\n"
+        " Annual Factors: January-December \n"
+        "          ,Mom   \n"
+        "1928,   25.00\n"
+    )
+    header, days, values = parse_french_csv(monthly)
+    assert header == ["mom"] and days == [date(1927, 1, 1), date(1927, 2, 1)]
+    assert values[0][0] == pytest.approx(0.0057) and values[1][0] != values[1][0]  # NaN
+
+
+def test_sp500_membership_intervals() -> None:
+    from us_stock_research.collectors.sp500_history import intervals, members_on, parse_history
+
+    text = (
+        "date,tickers\n"
+        '2000-01-03,"AAA,BRK.B,OLD"\n'
+        '2005-06-01,"AAA,BRK.B,NEW"\n'
+        '2010-01-04,"AAA,BRK.B,NEW,OLD"\n'
+    )
+    history = intervals(parse_history(text))
+    assert ("OLD", date(2000, 1, 3), date(2005, 6, 1)) in history
+    assert ("OLD", date(2010, 1, 4), None) in history
+    assert ("BRK-B", date(2000, 1, 3), None) in history
+    assert members_on(history, date(2007, 1, 1)) == {"AAA", "BRK-B", "NEW"}
+
+
+def test_former_member_download_validates_window_and_waits_on_quota() -> None:
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.collectors import sp500_history as sh
+    from us_stock_research.collectors.tiingo_intraday import RateLimited
+
+    class Store:
+        def __init__(self) -> None:
+            self.data: dict[str, Any] = {}
+
+        def has(self, kind: str, key: str) -> bool:
+            return key in self.data
+
+        def read(self, kind: str, key: str, columns: str = "*") -> list[tuple[Any, ...]]:
+            return [(r[0],) for r in self.data[key]]
+
+        def write(self, kind: str, key: str, schema: Any, cols: Any, order: str) -> None:
+            self.data[key] = list(zip(*cols, strict=True))
+
+    window = trading_days(date(2003, 1, 2), date(2003, 12, 31))
+
+    def rows(days: list[date]) -> list[list[Any]]:
+        return [[d, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0, 0.0, 1.0] for d in days]
+
+    later = trading_days(date(2020, 1, 2), date(2020, 3, 31))  # re-used ticker, wrong company
+    yahoo = {"REUSED": rows(later), "LIVE": rows(window)}
+    tiingo_calls: list[str] = []
+    quota = {"hits": 1}
+
+    def tiingo(symbol: str) -> list[list[Any]]:
+        tiingo_calls.append(symbol)
+        if symbol == "GONE" and quota["hits"]:
+            quota["hits"] -= 1
+            raise RateLimited("hourly allocation")
+        return rows(window) if symbol == "GONE" else []
+
+    targets = [
+        (s, date(2003, 1, 2), date(2004, 1, 2)) for s in ("GONE", "LIVE", "MISSING", "REUSED")
+    ]
+    store, waits = Store(), []
+    out = sh.collect_delisted(
+        targets,
+        store,
+        [("yahoo", lambda s: yahoo.get(s, [])), ("tiingo", tiingo)],
+        date(2026, 9, 29),
+        execute=True,
+        pause=0,
+        wait_minutes=61,
+        max_waits=3,
+        sleep=waits.append,
+        skip={"SKIPPED": "not_found"},
+    )
+    res = out["results"]
+    assert res["GONE"]["status"] == "stored" and res["GONE"]["source"] == "tiingo"
+    assert res["LIVE"]["source"] == "yahoo" and "LIVE" not in tiingo_calls
+    assert res["MISSING"]["status"] == "not_found"
+    assert res["REUSED"]["status"] == "rejected_window" and "REUSED" not in store.data
+    assert out["waits"] == 1 and 61 * 60 in waits
+    assert sorted(store.data) == ["GONE", "LIVE"]

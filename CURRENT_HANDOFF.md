@@ -25,4 +25,5 @@
 2. 研究用正常时段筛选：`quality.intraday.regular_session`。首批 Alpaca 下载截止到 2026-09-29（含当天未收盘的盘前数据），研究时剔除；之后默认截止到前一天。
 3. 在用户 Mac 的隔离 Linux 环境里可直接跑检查：用 `/Volumes/mysql/duckdb-pilot/linux-py310`（duckdb/pyarrow，Python 3.10）+ `datetime.UTC` 垫片。该环境无网络、无 pydantic，回测/研究合同类命令仍需在用户终端运行。
 4. 数据目录已含分钟线（`usr-catalog`），日线复查 2026-09-29：591/596 通过，隔离 5 只不变。
-5. 待用户选择：修幸存者偏差（历史成分股）、基本面因子研究、路线图阶段 1（月度下单意向文件，不下单）、安装每日更新定时任务。
+5. 补充数据（2026-09-29 晚写好，`scripts/mac_data_extras.sh`，用户通宵运行，次日早上检查）：拆股记录 `parquet/splits/`；Fama-French 五因子+动量（日/月）`parquet/factors/`；新增 11 个 FRED 序列与 ^VIX9D ^VIX3M ^VIX6M ^VVIX；标普 500 历史成分（fja05680/sp500，1996 起）`meta/sp500_history`，前成分股日线 `parquet/daily_delisted/`（先雅虎、后 Tiingo，按成分期覆盖率 ≥90% 验收，代码复用的拒收），覆盖表 `meta/sp500_coverage`。
+6. 待用户选择：修幸存者偏差（历史成分股）、基本面因子研究、路线图阶段 1（月度下单意向文件，不下单）、安装每日更新定时任务。
