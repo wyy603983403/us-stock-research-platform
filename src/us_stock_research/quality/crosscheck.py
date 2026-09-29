@@ -13,6 +13,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -23,7 +24,11 @@ import httpx
 from us_stock_research.bars import DailyBar
 from us_stock_research.storage import add_store_args, open_store, settings_from_args
 
-STOOQ_URL = "https://stooq.com/q/d/l/?s={symbol}.us&i=d"
+STOOQ_URL = "https://stooq.com/q/d/l/?s={symbol}.us&i=d&apikey={apikey}"
+APIKEY_HELP = (
+    "Stooq needs a free API key since 2026-03: open https://stooq.com/q/d/?s=spy.us&get_apikey "
+    "in a browser, solve the check, and put STOOQ_APIKEY=<key> in .env"
+)
 RETURN_TOLERANCE = 0.005  # daily return may differ by 0.5 percentage points
 MAX_BAD_RETURN_FRACTION = 0.01
 MIN_COVERAGE = 0.98
@@ -77,8 +82,10 @@ def compare(primary: list[DailyBar], other: dict[date, float]) -> dict[str, Any]
     }
 
 
-def fetch_stooq(client: httpx.Client, symbol: str) -> dict[date, float]:
-    response = client.get(STOOQ_URL.format(symbol=symbol.lower().replace("-", ".")))
+def fetch_stooq(client: httpx.Client, symbol: str, apikey: str | None) -> dict[date, float]:
+    if not apikey:
+        raise ValueError(APIKEY_HELP)
+    response = client.get(STOOQ_URL.format(symbol=symbol.lower().replace("-", "."), apikey=apikey))
     response.raise_for_status()
     return parse_close_csv(response.text)
 
@@ -92,8 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    settings = settings_from_args(args)  # also loads .env into the environment
     files = dict(item.split("=", 1) for item in args.file)
-    store = open_store(settings_from_args(args))
+    store = open_store(settings)
     reports: dict[str, Any] = {}
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         for symbol in args.symbols:
@@ -102,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
                 other = (
                     parse_close_csv(Path(files[key]).read_text())
                     if key in files
-                    else fetch_stooq(client, symbol)
+                    else fetch_stooq(client, symbol, os.environ.get("STOOQ_APIKEY"))
                 )
                 reports[key] = compare(store.read_bars(symbol), other)
             except (httpx.HTTPError, ValueError, OSError) as exc:
