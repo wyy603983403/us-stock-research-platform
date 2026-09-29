@@ -593,3 +593,13 @@ def test_intraday_year_chunks_and_resume_and_rate_limit(tmp_path: Path) -> None:
         sleep=lambda _s: None,
     )
     assert calls == [("AAA", date(2025, 1, 1), date(2025, 3, 1))]
+
+
+def test_alpaca_parse() -> None:
+    from us_stock_research.collectors.alpaca_intraday import parse_alpaca
+
+    bars = parse_alpaca(
+        [{"t": "2024-06-03T13:30:00Z", "o": 1, "h": 2, "l": 0.5, "c": 1.5, "v": 100, "n": 3}]
+    )
+    assert bars[0]["ts"].isoformat() == "2024-06-03T13:30:00+00:00"
+    assert bars[0]["volume"] == 100.0

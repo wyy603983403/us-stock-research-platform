@@ -130,6 +130,7 @@ def download_intraday(
     execute: bool,
     pause: float,
     sleep: Callable[[float], None] = time.sleep,
+    kind: str = KIND,
 ) -> dict[str, Any]:
     """Resumable: continues after the last stored bar. Checkpoints after every yearly chunk."""
     done: dict[str, Any] = {}
@@ -137,8 +138,8 @@ def download_intraday(
     stopped: str | None = None
     for symbol in symbols:
         existing: dict[datetime, tuple[float, ...]] = {}
-        if store.has(KIND, symbol):
-            for row in store.read(KIND, symbol, ", ".join(COLUMNS)):
+        if store.has(kind, symbol):
+            for row in store.read(kind, symbol, ", ".join(COLUMNS)):
                 existing[row[0]] = tuple(row[1:])
         first_day = max(start, max(existing).date()) if existing else start
         fetched = 0
@@ -158,7 +159,7 @@ def download_intraday(
                 if execute and bars:
                     ordered = sorted(existing)
                     store.write(
-                        KIND,
+                        kind,
                         symbol,
                         SCHEMA,
                         [ordered] + [[existing[t][i] for t in ordered] for i in range(5)],
