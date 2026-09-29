@@ -97,6 +97,17 @@ bash scripts/mac_download_universe.sh sp500    # 另加标普 500
 个股研究需要含退市股的历史成分数据（另行采购或建库）。指数、收益率、期货不是可交易价格，
 质量门禁对它们的价格异常只给警告。
 
+## 可信度检查（晋级前必做）
+
+- **交易日历**：`usr-audit-ohlcv` 对照 NYSE 日历检查缺失/多余交易日（已与 7 只 ETF 22 年真实数据逐日吻合）。
+- **第二数据源**：`usr-crosscheck SPY QQQ … --output artifacts/quality/crosscheck.json`
+  比对 Stooq（或 `--file SPY=path.csv` 提供任意来源）的收盘日收益，容差 0.5 个百分点。
+- **多重检验**：每次 `usr-backtest` 把参数组合登记到 `research/trials.jsonl`（进 Git），
+  晋级评估使用 Deflated Sharpe：试得越多，门槛越高，需 ≥ 0.95。
+- **幸存者偏差**：合同字段 `data.universe_kind`；`stocks_current_constituents` 永远不能晋级。
+
+自动化交易的分阶段路线见 [docs/trading-roadmap.md](docs/trading-roadmap.md)。
+
 ## 已内置策略
 
 | 名称 | 规则 |

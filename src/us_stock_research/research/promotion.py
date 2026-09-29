@@ -26,6 +26,9 @@ def assess(c: StudyContract, artifact: dict[str, Any], risk: RiskConfig) -> dict
         if c.strategy == "dual_momentum_v1"
         else 1 / max(len(c.risk_universe()), 1) <= risk.max_single_asset_weight,
         "excess_interval_lower_positive": bool(inf.get("interval")) and inf["interval"][0] > 0,
+        "survivorship_safe": c.data.universe_kind != "stocks_current_constituents",
+        "deflated_sharpe_ok": artifact.get("multiple_testing", {}).get("deflated_sharpe", 0.0)
+        >= artifact.get("multiple_testing", {}).get("threshold", 0.95),
         "human_approved": c.human_review.approved,
         "trading_disabled": artifact.get("trading_enabled") is False,
     }

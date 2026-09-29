@@ -17,6 +17,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 StudyStatus = Literal["draft", "frozen", "rejected", "promoted"]
+UniverseKind = Literal["etf", "macro", "stocks_current_constituents", "stocks_point_in_time"]
 STRATEGIES = ("trend_sma_v1", "dual_momentum_v1", "buy_and_hold_v1")
 
 
@@ -28,6 +29,8 @@ class DataSpec(_Strict):
     provider: str
     source_url: str
     universe: list[str] = Field(min_length=1)
+    # Stocks picked from today's index members are survivorship-biased and can never promote.
+    universe_kind: UniverseKind = "etf"
     start: date
     end: date
     snapshot_id: str | None = None

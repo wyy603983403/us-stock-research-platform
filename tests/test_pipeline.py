@@ -32,6 +32,9 @@ def contract(**overrides: Any) -> StudyContract:
     raw = yaml.safe_load((ROOT / "research/etf-trend-baseline/study.yml").read_text())
     raw["data"]["universe"] = ["SPY", "QQQ", "IEF", "SHY"]
     raw["data"]["start"] = "2010-01-01"
+    # The repo contract may be frozen with a real snapshot; tests start from a blank draft.
+    raw["status"] = "draft"
+    raw["data"]["snapshot_id"] = raw["data"]["quality_report"] = None
     for key, value in overrides.items():
         section, _, field = key.partition("__")
         if field:
@@ -245,3 +248,78 @@ def test_macro_series_price_issues_are_warnings() -> None:
     assert audit_bars("SPY", bars).errors
     report = audit_bars("^VIX", bars)
     assert not report.errors and report.warnings
+
+
+def test_nyse_calendar_known_dates() -> None:
+    from us_stock_research.calendar import is_trading_day, trading_days
+
+    closed = [(2021, 12, 24), (2022, 6, 20), (2020, 4, 10), (2025, 1, 9), (2012, 10, 29)]
+    open_ = [(2021, 12, 31), (2022, 6, 17), (2026, 9, 28), (2009, 4, 9)]
+    assert not any(is_trading_day(date(*d)) for d in closed)
+    assert all(is_trading_day(date(*d)) for d in open_)
+    assert len(trading_days(date(2023, 1, 1), date(2023, 12, 31))) == 250
+
+
+def test_quality_gate_uses_trading_calendar() -> None:
+    from conftest import synthetic_bars
+
+    bars = synthetic_bars(date(2024, 1, 2), 60, 0.0, 0.0, 0.0)  # weekdays, includes holidays
+    report = audit_bars("SPY", bars)
+    assert any("non-trading days" in w for w in report.warnings)
+    holes = [b for i, b in enumerate(bars) if i not in (10, 11, 12)]
+    assert any(
+        "missing" in w for w in audit_bars("SPY", holes).warnings + audit_bars("SPY", holes).errors
+    )
+
+
+def test_crosscheck_detects_disagreement() -> None:
+    from conftest import synthetic_bars
+
+    from us_stock_research.quality.crosscheck import compare, parse_close_csv
+
+    bars = synthetic_bars(date(2024, 1, 2), 100, 0.001, 0.01, 0.0)
+    good = {b.day: b.close for b in bars}
+    assert compare(bars, good)["passed"]
+    bad = dict(good)
+    for i, b in enumerate(bars):
+        if i % 10 == 0:
+            bad[b.day] = b.close * 1.05
+    assert not compare(bars, bad)["passed"]
+    csv_text = "Date,Open,High,Low,Close,Volume\n2024-01-02,1,1,1,10.5,5\n"
+    assert parse_close_csv(csv_text) == {date(2024, 1, 2): 10.5}
+    with pytest.raises(ValueError):
+        parse_close_csv("Get your apikey")
+
+
+def test_deflated_sharpe_penalises_many_trials() -> None:
+    from us_stock_research.research.trials import (
+        deflated_sharpe,
+        expected_max_sharpe,
+        moment_stats,
+    )
+
+    returns = [0.01 if i % 3 else -0.004 for i in range(120)]
+    stats = moment_stats(returns)
+    one = deflated_sharpe(stats, 1, 0.0)
+    many = deflated_sharpe(stats, 50, 0.01**2)
+    assert one > 0.99 and many < one
+    assert expected_max_sharpe(50, 0.0004) > expected_max_sharpe(5, 0.0004) > 0
+
+
+def test_trial_registry_counts_distinct_parameter_sets(tmp_path: Path) -> None:
+    from us_stock_research.research.trials import record_and_assess
+
+    def artifact(sma: int, shift: float) -> dict[str, Any]:
+        rets = [0.008 + shift * (-1) ** i * 0.01 for i in range(60)]
+        return {
+            "study": "s",
+            "strategy": "trend_sma_v1",
+            "parameters": {"sma_days": sma},
+            "snapshot_id": "snap",
+            "strategy_monthly_returns": rets,
+        }
+
+    path = tmp_path / "trials.jsonl"
+    assert record_and_assess(path, artifact(100, 1.0), ["A"])["trials_registered"] == 1
+    assert record_and_assess(path, artifact(100, 1.0), ["A"])["trials_registered"] == 1
+    assert record_and_assess(path, artifact(200, 1.5), ["A"])["trials_registered"] == 2

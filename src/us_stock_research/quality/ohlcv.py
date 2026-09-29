@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from us_stock_research.bars import DailyBar
+from us_stock_research.calendar import trading_days
 from us_stock_research.storage import add_store_args, open_store, settings_from_args
 
 MAX_CALENDAR_GAP_DAYS = 5  # e.g. Thu close -> Tue open around a holiday = 5
@@ -37,6 +38,25 @@ class QualityReport:
         data = asdict(self)
         data["passed"] = self.passed
         return data
+
+
+MAX_MISSING_TRADING_DAY_FRACTION = 0.01
+
+
+def _check_calendar(report: QualityReport, bars: list[DailyBar]) -> None:
+    """Compare bar dates with the NYSE calendar between the first and last bar."""
+    have = {b.day for b in bars}
+    expected = trading_days(bars[0].day, bars[-1].day)
+    missing = [d for d in expected if d not in have]
+    extra = sorted(have.difference(expected))
+    if missing:
+        text = f"{len(missing)} NYSE trading days missing ({missing[0]} .. {missing[-1]})"
+        if len(missing) / len(expected) > MAX_MISSING_TRADING_DAY_FRACTION:
+            report.errors.append(text)
+        else:
+            report.warnings.append(text)
+    if extra:
+        report.warnings.append(f"{len(extra)} bars on non-trading days (first: {extra[0]})")
 
 
 def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
@@ -63,6 +83,8 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
         ret = cur.adj_close / prev.adj_close - 1.0 if prev.adj_close > 0 else 0.0
         if abs(ret) > MAX_ABS_DAILY_RETURN:
             price_issues.append(f"{cur.day}: adjusted return {ret:+.1%} exceeds limit")
+    if not macro:
+        _check_calendar(report, bars)
     for b in bars:
         if min(b.open, b.high, b.low, b.close, b.adj_close) <= 0:
             price_issues.append(f"{b.day}: non-positive price")

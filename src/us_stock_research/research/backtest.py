@@ -24,6 +24,7 @@ from typing import Any
 from us_stock_research.config import load_settings
 from us_stock_research.research.contracts import StudyContract, load_contract
 from us_stock_research.research.snapshots import Bundle, load_snapshot
+from us_stock_research.research.trials import record_and_assess
 
 TRADING_DAYS = 252
 CASH = "__CASH__"  # zero-return cash when no cash_symbol is declared
@@ -346,6 +347,7 @@ def run_backtest(
         "benchmark": {"symbol": bench_sym, "metrics": metrics(bench, days)},
         "walk_forward": walk_forward_windows(curve, days, c.validation.test_months),
         "oos_months": len(strat_m),
+        "strategy_monthly_returns": strat_m,
         "inference": block_bootstrap(
             excess, inf.resamples, inf.block_size_months, inf.confidence_level, c.random_seed
         ),
@@ -358,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--snapshots-dir", type=Path, help="default: <storage root>/snapshots")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--registry", type=Path, default=Path("research/trials.jsonl"))
     args = parser.parse_args(argv)
     contract = load_contract(args.contract)
     if not contract.data.snapshot_id:
@@ -366,9 +369,11 @@ def main(argv: list[str] | None = None) -> int:
         contract.data.snapshot_id, args.snapshots_dir or load_settings().snapshots_dir
     )
     result = run_backtest(contract, bundle)
+    result["multiple_testing"] = record_and_assess(args.registry, result, contract.data.universe)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result["strategy_metrics"], indent=2))
+    print(json.dumps(result["multiple_testing"], indent=2))
     return 0
 
 
