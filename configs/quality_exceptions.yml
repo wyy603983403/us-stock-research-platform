@@ -12,8 +12,11 @@ accepted:
   FIS: [{date: "2008-07-03", reason: "分拆（Metavante），Tiingo 一致"}]
   GEN: [{date: "2016-03-04", reason: "特别分红，Tiingo 一致"}]
   GNRC: [{date: "2012-07-02", reason: "特别分红，Tiingo 相差 3.7 个百分点，方向一致"}]
+  DPZ: [{date: "2007-05-07", reason: "特别分红，Tiingo 相差 1.7 个百分点"}]
   HUBB: [{date: "2021-05-05", reason: "当日最高/最低价不一致；按收盘价的收益与 Tiingo 一致"}]
   KLAC: [{date: "2014-11-26", reason: "特别分红，Tiingo 一致"}]
+  LDOS: [{date: "2016-08-17", reason: "特别分红（分拆），Tiingo 相差 0.3 个百分点"}]
+  MDLZ: [{date: "2012-10-02", reason: "分拆（Kraft Foods Group），Tiingo 相差 1.6 个百分点"}]
   MO:
     - {date: "2007-04-02", reason: "分拆（Kraft），Tiingo 一致"}
     - {date: "2008-03-31", reason: "分拆（Philip Morris Intl），Tiingo 一致"}
@@ -27,4 +30,7 @@ quarantine:
   ETN: "2001-01-02 雅虎与 Tiingo 相差 33 个百分点"
   HPQ: "2000-06-05 雅虎与 Tiingo 相差 24 个百分点（Agilent 分拆）"
   EXPE: "2011-12-21 雅虎与 Tiingo 相差 37 个百分点（TripAdvisor 分拆）"
-# 待复核（交叉验证最大差异 ≥5 个百分点，但未定位到当日）：DPZ MDLZ LDOS KDP
+  KDP: "2018-07-10 合并特别分红（约占股价 80%），雅虎与 Tiingo 复权收益相差 9.6 个百分点，超过 5 个百分点的接受线"
+# 下面这些日期两家数据源有分歧，但门禁没有报错（不影响接受/隔离结论），研究用到时留意：
+#   DPZ 2016-02-25/26（相差 13%）、MDLZ 2003-01-29/30（13%）、LDOS 2013-09-30（10.7%，单日）
+#   另有 2000-01-05/06、2000-05-31/06-01、2003-01-29/30 在许多标的上同时出现，属数据源本身问题
