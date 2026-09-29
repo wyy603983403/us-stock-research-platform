@@ -156,12 +156,15 @@ def download_intraday(
     kind: str = KIND,
     restart: bool = False,
     chunks: Callable[[date, date], list[tuple[date, date]]] = month_chunks,
+    log: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Resumable: continues after the last stored bar. Checkpoints after every yearly chunk."""
     done: dict[str, Any] = {}
     failed: dict[str, str] = {}
     stopped: str | None = None
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols, 1):
+        if log:
+            log(f"[{index}/{len(symbols)}] {symbol}")
         existing: dict[datetime, tuple[float, ...]] = {}
         if store.has(kind, symbol) and not restart:
             for row in store.read(kind, symbol, ", ".join(COLUMNS)):
@@ -196,6 +199,8 @@ def download_intraday(
             break
         except (httpx.HTTPError, ValueError, KeyError) as exc:
             failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+            if log:
+                log(f"    failed: {failed[symbol][:120]}")
             continue
         days = {t.date() for t in existing}
         done[symbol] = {

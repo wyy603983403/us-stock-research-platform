@@ -658,3 +658,45 @@ def test_alpaca_parse() -> None:
     )
     assert bars[0]["ts"].isoformat() == "2024-06-03T13:30:00+00:00"
     assert bars[0]["volume"] == 100.0
+
+
+def test_alpaca_symbol_mapping_and_retry() -> None:
+    from us_stock_research.collectors import alpaca_intraday as al
+
+    assert al.to_alpaca("brk-b") == "BRK.B"
+    assert al.minute_symbols(["SPY", "^GSPC", "GC=F", "DX-Y.NYB", "BRK-B"]) == ["SPY", "BRK-B"]
+
+    class Resp:
+        def __init__(self, code: int, payload: dict[str, Any]) -> None:
+            self.status_code, self.payload, self.text = code, payload, ""
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return self.payload
+
+    bar = {"t": "2024-06-03T13:30:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1}
+    queue = [
+        Resp(429, {}),
+        Resp(200, {"bars": [bar], "next_page_token": "p2"}),
+        Resp(200, {"bars": [bar], "next_page_token": None}),
+    ]
+    seen: list[dict[str, Any]] = []
+
+    class Client:
+        def get(self, url: str, params: dict[str, Any], headers: dict[str, str]) -> Resp:
+            seen.append(dict(params))
+            return queue.pop(0)
+
+    waits: list[float] = []
+    bars = al.fetch_chunk(
+        Client(),  # type: ignore[arg-type]
+        "BRK-B",
+        date(2024, 6, 3),
+        date(2024, 6, 3),
+        "k",
+        "s",
+        sleep=waits.append,
+    )
+    assert len(bars) == 2 and waits == [60] and seen[-1]["page_token"] == "p2"

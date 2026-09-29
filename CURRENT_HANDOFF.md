@@ -10,7 +10,8 @@
 - 每日增量：`usr-update`（重叠窗口比对，发现复权修订则整段重下）；launchd 定时任务脚本已写，用户尚未安装。
 - 分钟线（仅 IEX 单一交易所，成交量不可代表全市场）：
   - Alpaca `intraday_1min_alpaca`：SPY、QQQ 已下，2020-07-27 至 2026-09-28，1550 个交易日，约 60 万根/只，含盘前盘后。
-  - Tiingo `intraday_1min`：下载器已写（`usr-collect-intraday`），尚未正式下载；探测显示 2018-06 起有数据，2016-06 无。免费额度未核实。
+  - Tiingo `intraday_1min`：每次请求最多返回 1 万根（只留最后部分），已改为按月分段 + 截断自动拆分；首次按年下载的 SPY/QQQ 不完整，需 `--restart` 重下。免费额度未核实。
+  - 分工：Alpaca 下全部（`scripts/mac_download_intraday.sh alpaca`，`--all-stored`），Tiingo 只下 `configs/universes/intraday_core.yml` 的 15 只核心 ETF。
 
 ## 研究
 

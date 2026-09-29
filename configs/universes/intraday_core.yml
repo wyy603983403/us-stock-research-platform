@@ -1,0 +1,3 @@
+# Tiingo 分钟线只下这些核心 ETF（免费额度有限），用来补 2018–2020 年并与 Alpaca 交叉核对
+name: intraday_core
+symbols: [SPY, QQQ, IWM, DIA, EFA, EEM, TLT, IEF, SHY, GLD, VNQ, XLK, XLF, XLE, XLV]
