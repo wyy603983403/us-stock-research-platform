@@ -5,10 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== 1/5 推送到 GitHub =="
-if git ls-remote --exit-code origin main >/dev/null 2>&1; then
-  git push origin main || echo "推送失败（远端有新提交？）— 先 git pull --rebase 再推"
-else
-  git push -u origin main
+if [ "${SKIP_PUSH:-0}" = "1" ]; then
+  echo "已跳过推送（SKIP_PUSH=1）"
+elif ! git push -u origin main; then
+  # 推送失败不能挡住后面的步骤（取数、快照都不依赖 GitHub）
+  echo "!! 推送失败，先继续后面的步骤；权限问题解决后手动运行：git push -u origin main"
 fi
 
 echo "== 数据存储位置 =="
