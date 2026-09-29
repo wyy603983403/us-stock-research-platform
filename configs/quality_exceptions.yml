@@ -1,0 +1,30 @@
+# 质量门禁的人工复核记录。规则：
+#  accepted   —— 已复核并接受的单日异常（降级为带原因的警告）。证据须写明。
+#  quarantine —— 数据不可信的标的：门禁判为未通过，研究合同若包含它则晋级评估不通过。
+# 2026-09-29 复核依据：Tiingo 独立复权价与雅虎在当日的复权收益相差 <5 个百分点，
+# 说明两家对该次分拆/特别分红的处理一致（原始价大跌，复权价按分红加回）。
+accepted:
+  AIG: [{date: "2011-01-20", reason: "分配/分拆，Tiingo 一致"}]
+  BKR: [{date: "2017-07-05", reason: "特别分红，Tiingo 一致"}]
+  CAH: [{date: "2009-09-01", reason: "分拆（CareFusion），Tiingo 一致"}]
+  EFX: [{date: "2001-07-09", reason: "分拆（ChoicePoint），Tiingo 一致"}]
+  EWT: [{date: "2022-12-13", reason: "基金资本利得分配，Tiingo 一致"}]
+  FIS: [{date: "2008-07-03", reason: "分拆（Metavante），Tiingo 一致"}]
+  GEN: [{date: "2016-03-04", reason: "特别分红，Tiingo 一致"}]
+  GNRC: [{date: "2012-07-02", reason: "特别分红，Tiingo 相差 3.7 个百分点，方向一致"}]
+  HUBB: [{date: "2021-05-05", reason: "当日最高/最低价不一致；按收盘价的收益与 Tiingo 一致"}]
+  KLAC: [{date: "2014-11-26", reason: "特别分红，Tiingo 一致"}]
+  MO:
+    - {date: "2007-04-02", reason: "分拆（Kraft），Tiingo 一致"}
+    - {date: "2008-03-31", reason: "分拆（Philip Morris Intl），Tiingo 一致"}
+  MS: [{date: "2007-07-02", reason: "分拆（Discover），Tiingo 完全一致"}]
+  PDBC: [{date: "2021-12-03", reason: "基金分配，Tiingo 完全一致"}]
+  ROK: [{date: "2001-07-02", reason: "分拆（Conexant），Tiingo 一致"}]
+  TDG: [{date: "2009-10-14", reason: "特别分红，Tiingo 一致"}]
+  WY: [{date: "2010-07-20", reason: "特别分红，Tiingo 一致"}]
+quarantine:
+  DHR: "2016-07-05 雅虎复权涨幅 +61%（原始价 +3.6%），与 Tiingo 相差 58 个百分点：雅虎调整错误"
+  ETN: "2001-01-02 雅虎与 Tiingo 相差 33 个百分点"
+  HPQ: "2000-06-05 雅虎与 Tiingo 相差 24 个百分点（Agilent 分拆）"
+  EXPE: "2011-12-21 雅虎与 Tiingo 相差 37 个百分点（TripAdvisor 分拆）"
+# 待复核（交叉验证最大差异 ≥5 个百分点，但未定位到当日）：DPZ MDLZ LDOS KDP

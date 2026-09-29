@@ -504,3 +504,21 @@ def test_catalog_rows_and_markdown(tmp_path: Path) -> None:
     assert by["ZZZ"]["kind"] == "stock" and by["ZZZ"]["sector"] == "Industrials"
     md = render_markdown(rows, {"DGS10": (date(2024, 5, 1), 100)}, ["AAPL"])
     assert "DGS10" in md and "SPY" in md and "Industrials" in md
+
+
+def test_reviewed_exceptions_and_quarantine(tmp_path: Path) -> None:
+    from us_stock_research.quality.ohlcv import load_exceptions
+
+    a = DailyBar(date(2024, 1, 2), 100, 101, 99, 100, 100, 1)
+    b = DailyBar(date(2024, 1, 3), 60, 61, 59, 60, 100, 1)  # raw -40% but adjusted flat
+    assert audit_bars("XYZ", [a, b]).errors
+    ok = audit_bars("XYZ", [a, b], {"2024-01-03": "spin-off, second source agrees"})
+    assert not ok.errors and any(w.startswith("reviewed:") for w in ok.warnings)
+
+    cfg = tmp_path / "ex.yml"
+    cfg.write_text(
+        'accepted:\n  XYZ: [{date: "2024-01-03", reason: r}]\nquarantine:\n  BAD: reason\n'
+    )
+    accepted, quarantine = load_exceptions(cfg)
+    assert accepted == {"XYZ": {"2024-01-03": "r"}} and quarantine == {"BAD": "reason"}
+    assert load_exceptions(tmp_path / "missing.yml") == ({}, {})

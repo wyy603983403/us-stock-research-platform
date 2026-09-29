@@ -13,6 +13,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import yaml
+
 from us_stock_research.bars import DailyBar
 from us_stock_research.calendar import trading_days
 from us_stock_research.storage import add_store_args, open_store, settings_from_args
@@ -60,7 +62,9 @@ def _check_calendar(report: QualityReport, bars: list[DailyBar]) -> None:
         report.warnings.append(f"{len(extra)} bars on non-trading days (first: {extra[0]})")
 
 
-def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
+def audit_bars(
+    symbol: str, bars: list[DailyBar], accepted: dict[str, str] | None = None
+) -> QualityReport:
     report = QualityReport(
         symbol=symbol.upper(),
         rows=len(bars),
@@ -104,7 +108,34 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
             price_issues.append(f"{b.day}: inconsistent OHLC")
         if b.volume < 0:
             report.errors.append(f"{b.day}: negative volume")
+    return _apply_reviewed(report, accepted or {})
+
+
+def _apply_reviewed(report: QualityReport, accepted: dict[str, str]) -> QualityReport:
+    """Errors on dates a human reviewed and accepted become warnings that carry the reason."""
+    if not accepted:
+        return report
+    kept: list[str] = []
+    for error in report.errors:
+        reason = accepted.get(error[:10])
+        if reason:
+            report.warnings.append(f"reviewed: {error} [{reason}]")
+        else:
+            kept.append(error)
+    report.errors = kept
     return report
+
+
+def load_exceptions(path: Path) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+    """Reviewed exceptions per symbol/date and the quarantine list (symbol -> reason)."""
+    if not path.exists():
+        return {}, {}
+    raw = yaml.safe_load(path.read_text()) or {}
+    accepted = {
+        symbol: {str(item["date"]): str(item["reason"]) for item in items}
+        for symbol, items in (raw.get("accepted") or {}).items()
+    }
+    return accepted, {k: str(v) for k, v in (raw.get("quarantine") or {}).items()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,12 +143,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("symbols", nargs="+")
     add_store_args(parser)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
     args = parser.parse_args(argv)
+    accepted, quarantine = load_exceptions(args.exceptions)
     store = open_store(settings_from_args(args))
     reports: list[dict[str, object]] = []
     for symbol in args.symbols:
         bars = store.read_bars(symbol) if store.has_bars(symbol) else []
-        reports.append(audit_bars(symbol, bars).to_dict())
+        report = audit_bars(symbol, bars, accepted.get(symbol.upper())).to_dict()
+        if symbol.upper() in quarantine:
+            report["quarantined"] = quarantine[symbol.upper()]
+            report["passed"] = False
+        reports.append(report)
     out = {"passed": all(r["passed"] for r in reports), "reports": reports}
     text = json.dumps(out, indent=2)
     if args.output:

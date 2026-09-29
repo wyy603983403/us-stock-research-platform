@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from us_stock_research.config import load_settings
+from us_stock_research.quality.ohlcv import load_exceptions
 from us_stock_research.storage import BarStore, open_store
 from us_stock_research.tables import TableStore
 
@@ -34,6 +35,7 @@ SCHEMA = {
     "stale_days": "INTEGER",
     "quality_errors": "INTEGER",
     "quality_warnings": "INTEGER",
+    "quarantined": "BOOLEAN",
 }
 
 
@@ -53,6 +55,7 @@ def build_rows(
     today: date,
     sp500: dict[str, tuple[str, str]] | None = None,
     quality: dict[str, tuple[int, int]] | None = None,
+    quarantine: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per stored symbol. ``sp500`` maps symbol -> (name, sector)."""
     sp500, quality = sp500 or {}, quality or {}
@@ -75,6 +78,7 @@ def build_rows(
                 "stale_days": (today - bars[-1].day).days,
                 "quality_errors": errors,
                 "quality_warnings": warnings,
+                "quarantined": symbol in (quarantine or {}),
             }
         )
     return rows
@@ -106,6 +110,8 @@ def render_markdown(
             f"| {sum(bool(i['quality_errors']) for i in items)} |"
         )
     lines += ["", f"需要人工复核（质量错误）：{', '.join(flagged) or '无'}"]
+    quarantined = [r["symbol"] for r in rows if r.get("quarantined")]
+    lines += [f"已隔离（数据不可信，禁止用于研究）：{', '.join(quarantined) or '无'}"]
     lines += [f"数据过旧：{', '.join(stale) or '无'}", "", "## 宏观序列", ""]
     lines += [f"- {sid}：{n:,} 条，最新 {last}" for sid, (last, n) in sorted(macro.items())]
     if not macro:
@@ -129,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--universes-dir", type=Path, default=Path("configs/universes"))
     parser.add_argument("--quality", type=Path, default=Path("artifacts/quality/universe.json"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/catalog.md"))
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
     args = parser.parse_args(argv)
     settings = load_settings()
     store = open_store(settings)
@@ -154,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         datetime.now(UTC).date(),
         sp500,
         quality,
+        load_exceptions(args.exceptions)[1],
     )
     if tables and rows:
         tables.write(

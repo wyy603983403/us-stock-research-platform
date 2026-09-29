@@ -8,11 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from us_stock_research.quality.ohlcv import load_exceptions
 from us_stock_research.research.contracts import StudyContract, load_contract
 from us_stock_research.risk import RiskConfig, load_risk
 
 
-def assess(c: StudyContract, artifact: dict[str, Any], risk: RiskConfig) -> dict[str, Any]:
+def assess(
+    c: StudyContract,
+    artifact: dict[str, Any],
+    risk: RiskConfig,
+    quarantine: dict[str, str] | None = None,
+) -> dict[str, Any]:
     m = artifact["strategy_metrics"]
     inf = artifact.get("inference", {})
     worst = m.get("worst_rolling_12m_return")
@@ -29,6 +35,8 @@ def assess(c: StudyContract, artifact: dict[str, Any], risk: RiskConfig) -> dict
         "survivorship_safe": c.data.universe_kind != "stocks_current_constituents",
         "deflated_sharpe_ok": artifact.get("multiple_testing", {}).get("deflated_sharpe", 0.0)
         >= artifact.get("multiple_testing", {}).get("threshold", 0.95),
+        "no_quarantined_symbols": not {x.upper() for x in c.data.universe}
+        & {x.upper() for x in (quarantine or {})},
         "human_approved": c.human_review.approved,
         "trading_disabled": artifact.get("trading_enabled") is False,
     }
@@ -46,9 +54,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--risk", type=Path, default=Path("configs/risk/default.yml"))
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
     args = parser.parse_args(argv)
+    _, quarantine = load_exceptions(args.exceptions)
     result = assess(
-        load_contract(args.contract), json.loads(args.artifact.read_text()), load_risk(args.risk)
+        load_contract(args.contract),
+        json.loads(args.artifact.read_text()),
+        load_risk(args.risk),
+        quarantine,
     )
     text = json.dumps(result, indent=2)
     if args.output:

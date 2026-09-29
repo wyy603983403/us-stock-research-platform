@@ -78,6 +78,10 @@ def compare(
         "return_mismatch_fraction": round(fraction_bad, 5),
         "worst_return_diff": {"date": worst[0].isoformat(), "diff": worst[1]} if worst else None,
         "first_mismatches": [d.isoformat() for d, _ in bad[:5]],
+        "worst_days": [
+            {"date": d.isoformat(), "diff": round(x, 5)}
+            for d, x in sorted(diffs, key=lambda t: -t[1])[:8]
+        ],
         "passed": bool(common)
         and coverage >= MIN_COVERAGE
         and fraction_bad <= MAX_BAD_RETURN_FRACTION,
