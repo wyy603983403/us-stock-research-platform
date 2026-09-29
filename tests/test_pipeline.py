@@ -744,6 +744,10 @@ def test_intraday_audit_flags_missing_extra_ohlc_and_splits() -> None:
     assert ok["passed"], ok["reasons"]
     assert ok["outside_session"] == 1 and ok["close_split_factor_days"] == 1
     assert ok["mean_coverage"] == 1.0
+    assert qi._split_like(16.0) and qi._split_like(1 / 20) and qi._split_like(1.5)
+    assert not qi._split_like(1.1) and not qi._split_like(0.9)
+    spun = qi.audit_intraday("X", rows, {d: 100.0 / 1.3057 for d in days})
+    assert spun["passed"] and spun["close_adjustment_days"] == 4
 
     bad = [r for r in rows if r[0].date() != days[1]]  # a missing trading day
     bad += _minute_rows(date(2024, 6, 8), 100.0, 5)  # Saturday

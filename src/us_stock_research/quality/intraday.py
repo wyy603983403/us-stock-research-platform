@@ -8,8 +8,9 @@ every row. Checks per symbol:
 * regular-session bars on NYSE holidays/weekends (extra days: a timestamp or calendar bug);
 * OHLC consistency (high >= open/close >= low > 0);
 * last regular-session close vs. the daily close already stored from Yahoo. Minute prices are
-  unadjusted, so days whose ratio is a clean split factor (2:1, 1:10 ...) are counted separately
-  instead of as mismatches;
+  unadjusted, so days whose ratio is a clean split factor (2:1, 1:10 ...) are counted separately,
+  and so are runs where the ratio is flat for consecutive days (Yahoo back-adjusts "close" for
+  spin-offs by a constant factor). Only isolated disagreements count as mismatches;
 * minute coverage (bars / session minutes). IEX is one venue, so thin names legitimately miss
   minutes: reported as information, not failure.
 """
@@ -35,8 +36,8 @@ ET = ZoneInfo("America/New_York")
 SOURCES = {"alpaca": "intraday_1min_alpaca", "tiingo": "intraday_1min"}
 COLUMNS = "ts, open, high, low, close, volume"
 CLOSE_TOLERANCE = 0.02  # IEX last trade vs consolidated close
-SPLIT_FACTORS = (1.5, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50)
 MAX_MISSING_FRACTION = 0.02
+ADJUSTMENT_STABILITY = 0.005  # day-to-day drift of a corporate-action adjustment ratio
 MAX_CLOSE_MISMATCH_FRACTION = 0.01
 
 Row = tuple[Any, ...]  # (ts naive UTC, open, high, low, close, volume)
@@ -83,10 +84,15 @@ def regular_session(rows: Iterable[Row]) -> list[Row]:
 
 
 def _split_like(ratio: float) -> bool:
-    for k in SPLIT_FACTORS:
-        for target in (k, 1 / k):
-            if abs(ratio / target - 1) <= CLOSE_TOLERANCE:
-                return True
+    """True when raw/split-adjusted looks like a (cumulative) split factor: 2, 3:2, 16, 1/10 ..."""
+    x = max(ratio, 1 / ratio)
+    if x < 1.4:
+        return False
+    for denominator in (1, 2, 3):
+        scaled = x * denominator
+        nearest = round(scaled)
+        if nearest >= 2 and abs(scaled / nearest - 1) <= CLOSE_TOLERANCE:
+            return True
     return False
 
 
@@ -122,19 +128,26 @@ def audit_intraday(
     mismatches: list[tuple[date, float]] = []
     split_days = 0
     compared = 0
+    ratios: list[tuple[date, float]] = []
     if daily_close:
-        for d in days:
-            ref = daily_close.get(d)
-            if not ref:
-                continue
-            compared += 1
-            ratio = per_day[d]["close"] / ref
-            if abs(ratio - 1) <= CLOSE_TOLERANCE:
-                continue
-            if _split_like(ratio):
-                split_days += 1
-            else:
-                mismatches.append((d, ratio - 1))
+        ratios = [(d, per_day[d]["close"] / daily_close[d]) for d in days if daily_close.get(d)]
+        compared = len(ratios)
+    adjusted_days = 0
+    levels: set[float] = set()
+    for i, (d, ratio) in enumerate(ratios):
+        if abs(ratio - 1) <= CLOSE_TOLERANCE:
+            continue
+        if _split_like(ratio):
+            split_days += 1
+            continue
+        # Yahoo back-adjusts "close" for spin-offs by a constant factor: the raw/adjusted ratio
+        # then stays flat for months. A bad print is isolated, so compare with neighbours.
+        neighbours = [ratios[j][1] for j in (i - 1, i + 1) if 0 <= j < len(ratios)]
+        if any(abs(ratio / n - 1) <= ADJUSTMENT_STABILITY for n in neighbours):
+            adjusted_days += 1
+            levels.add(round(ratio, 3))
+        else:
+            mismatches.append((d, ratio - 1))
     mismatches.sort(key=lambda x: -abs(x[1]))
     missing_fraction = len(missing) / len(expected)
     mismatch_fraction = len(mismatches) / compared if compared else 0.0
@@ -167,6 +180,8 @@ def audit_intraday(
         "close_compared_days": compared,
         "close_mismatch_days": len(mismatches),
         "close_split_factor_days": split_days,
+        "close_adjustment_days": adjusted_days,
+        "close_adjustment_levels": sorted(levels)[:10],
         "close_worst": [{"date": d.isoformat(), "diff": round(x, 4)} for d, x in mismatches[:5]],
         "passed": not reasons,
         "reasons": reasons,
