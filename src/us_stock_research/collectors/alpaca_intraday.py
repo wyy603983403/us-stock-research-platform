@@ -17,7 +17,11 @@ from typing import Any
 
 import httpx
 
-from us_stock_research.collectors.tiingo_intraday import RateLimited, download_intraday
+from us_stock_research.collectors.tiingo_intraday import (
+    RateLimited,
+    download_intraday,
+    year_chunks,
+)
 from us_stock_research.config import load_settings
 from us_stock_research.tables import TableStore
 
@@ -92,6 +96,7 @@ def collect_main(argv: list[str] | None = None) -> int:
             execute=args.execute,
             pause=args.pause,
             kind=KIND,
+            chunks=year_chunks,  # Alpaca pages, so no row cap per window
         )
     summary = {"dry_run": not args.execute, **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)

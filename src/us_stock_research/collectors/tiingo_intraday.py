@@ -101,6 +101,21 @@ def year_chunks(start: date, end: date) -> list[tuple[date, date]]:
     return out
 
 
+def month_chunks(start: date, end: date) -> list[tuple[date, date]]:
+    """Calendar-month windows: at most ~23 sessions x 390 bars, under Tiingo's 10k-row cap."""
+    out: list[tuple[date, date]] = []
+    cursor = start
+    while cursor <= end:
+        nxt = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
+        stop = min(nxt - timedelta(days=1), end)
+        out.append((cursor, stop))
+        cursor = stop + timedelta(days=1)
+    return out
+
+
+MAX_ROWS = 10_000  # Tiingo silently keeps only the last 10k rows of a response
+
+
 def fetch_chunk(
     client: httpx.Client, symbol: str, start: date, end: date, freq: str, token: str
 ) -> list[dict[str, Any]]:
@@ -117,7 +132,15 @@ def fetch_chunk(
     ):
         raise RateLimited(response.text[:200].replace(token, "***"))
     response.raise_for_status()
-    return parse_iex(response.json())
+    rows = response.json()
+    if len(rows) >= MAX_ROWS and start < end:
+        mid = start + (end - start) // 2
+        return fetch_chunk(client, symbol, start, mid, freq, token) + fetch_chunk(
+            client, symbol, mid + timedelta(days=1), end, freq, token
+        )
+    if len(rows) >= MAX_ROWS:
+        raise ValueError(f"{symbol} {start}: single day hit the {MAX_ROWS}-row cap")
+    return parse_iex(rows)
 
 
 def download_intraday(
@@ -131,6 +154,8 @@ def download_intraday(
     pause: float,
     sleep: Callable[[float], None] = time.sleep,
     kind: str = KIND,
+    restart: bool = False,
+    chunks: Callable[[date, date], list[tuple[date, date]]] = month_chunks,
 ) -> dict[str, Any]:
     """Resumable: continues after the last stored bar. Checkpoints after every yearly chunk."""
     done: dict[str, Any] = {}
@@ -138,13 +163,13 @@ def download_intraday(
     stopped: str | None = None
     for symbol in symbols:
         existing: dict[datetime, tuple[float, ...]] = {}
-        if store.has(kind, symbol):
+        if store.has(kind, symbol) and not restart:
             for row in store.read(kind, symbol, ", ".join(COLUMNS)):
                 existing[row[0]] = tuple(row[1:])
         first_day = max(start, max(existing).date()) if existing else start
         fetched = 0
         try:
-            for a, b in year_chunks(first_day, end):
+            for a, b in chunks(first_day, end):
                 bars = fetch(symbol, a, b)
                 for bar in bars:
                     ts = bar["ts"].astimezone(UTC).replace(tzinfo=None)
@@ -156,7 +181,7 @@ def download_intraday(
                         bar["volume"],
                     )
                 fetched += len(bars)
-                if execute and bars:
+                if execute and (bars or (restart and not fetched)):
                     ordered = sorted(existing)
                     store.write(
                         kind,
@@ -191,6 +216,7 @@ def collect_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--freq", default="1min")
     parser.add_argument("--pause", type=float, default=2.0)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--restart", action="store_true", help="ignore stored bars, refetch all")
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -208,6 +234,7 @@ def collect_main(argv: list[str] | None = None) -> int:
             args.end,
             execute=args.execute,
             pause=args.pause,
+            restart=args.restart,
         )
     summary = {"dry_run": not args.execute, **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)

@@ -578,6 +578,7 @@ def test_intraday_year_chunks_and_resume_and_rate_limit(tmp_path: Path) -> None:
         execute=True,
         pause=0,
         sleep=lambda _s: None,
+        chunks=ti.year_chunks,
     )
     assert out["stopped_by_rate_limit"] and "BAD" in out["stopped_by_rate_limit"]
     assert "CCC" not in store.data and len(store.data["AAA"]) == 2
@@ -591,8 +592,62 @@ def test_intraday_year_chunks_and_resume_and_rate_limit(tmp_path: Path) -> None:
         execute=True,
         pause=0,
         sleep=lambda _s: None,
+        chunks=ti.year_chunks,
     )
     assert calls == [("AAA", date(2025, 1, 1), date(2025, 3, 1))]
+    calls.clear()
+    ti.download_intraday(
+        ["AAA"],
+        store,
+        fetch,
+        date(2024, 6, 1),
+        date(2024, 8, 10),
+        execute=True,
+        pause=0,
+        sleep=lambda _s: None,
+        restart=True,
+    )
+    assert [c[1] for c in calls] == [date(2024, 6, 1), date(2024, 7, 1), date(2024, 8, 1)]
+    assert len(store.data["AAA"]) == 3  # restart discarded the earlier bars
+
+
+def test_tiingo_fetch_splits_truncated_windows() -> None:
+    from us_stock_research.collectors import tiingo_intraday as ti
+
+    class Resp:
+        status_code = 200
+        text = ""
+
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self.rows = rows
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> list[dict[str, Any]]:
+            return self.rows
+
+    class Client:
+        def __init__(self) -> None:
+            self.windows: list[tuple[str, str]] = []
+
+        def get(self, url: str, params: dict[str, str]) -> Resp:
+            a, b = params["startDate"], params["endDate"]
+            self.windows.append((a, b))
+            days = (date.fromisoformat(b) - date.fromisoformat(a)).days + 1
+            row = {"date": f"{a}T14:30:00.000Z", "open": 1, "high": 1, "low": 1, "close": 1}
+            n = ti.MAX_ROWS if days > 2 else 1
+            return Resp([dict(row, volume=1)] * n)
+
+    client = Client()
+    bars = ti.fetch_chunk(client, "SPY", date(2024, 6, 1), date(2024, 6, 8), "1min", "tok")  # type: ignore[arg-type]
+    assert len(client.windows) > 1 and len(bars) == len(client.windows) - sum(
+        1 for a, b in client.windows if (date.fromisoformat(b) - date.fromisoformat(a)).days + 1 > 2
+    )
+    assert ti.month_chunks(date(2024, 12, 15), date(2025, 1, 3)) == [
+        (date(2024, 12, 15), date(2024, 12, 31)),
+        (date(2025, 1, 1), date(2025, 1, 3)),
+    ]
 
 
 def test_alpaca_parse() -> None:
