@@ -208,3 +208,40 @@ def test_repo_broker_config_compares(data_dir: Path, tmp_path: Path) -> None:
     by = {r["broker"]: r for r in rows}
     assert by["schwab_international"]["commission_usd"] == 0
     assert by["binance_us_stocks"]["commission_usd"] > by["ibkr_fixed"]["commission_usd"] > 0
+
+
+def test_universe_download_is_resumable_and_reports_failures(tmp_path: Path) -> None:
+    from conftest import synthetic_bars
+
+    from us_stock_research.collectors.universe import download, parse_sp500_csv, to_yahoo
+    from us_stock_research.storage import CsvStore
+
+    assert to_yahoo("brk.b") == "BRK-B"
+    assert parse_sp500_csv("Symbol,Name\nBRK.B,x\nAAPL,y\nAAPL,y\n") == ["AAPL", "BRK-B"]
+    store = CsvStore(tmp_path)
+    bars = synthetic_bars(date(2020, 1, 1), 30, 0.001, 0.0, 0.0)
+    calls: list[str] = []
+
+    def fetch(symbol: str, start: date, end: date):  # type: ignore[no-untyped-def]
+        calls.append(symbol)
+        if symbol == "BAD":
+            raise ValueError("boom")
+        return bars, {date(2020, 1, 15): 0.5}
+
+    args = {"execute": True, "refresh": False, "pause": 0.0, "sleep": lambda _: None}
+    first = download(["AAA", "BAD"], store, fetch, date(2020, 1, 1), date(2020, 3, 1), **args)
+    assert first["downloaded"] == ["AAA"] and "BAD" in first["failed"]
+    assert store.read_dividends("AAA") == {date(2020, 1, 15): 0.5}
+    calls.clear()
+    second = download(["AAA", "CCC"], store, fetch, date(2020, 1, 1), date(2020, 3, 1), **args)
+    assert second["skipped_existing"] == ["AAA"] and calls == ["CCC"]
+
+
+def test_macro_series_price_issues_are_warnings() -> None:
+    from conftest import synthetic_bars
+
+    bars = synthetic_bars(date(2020, 1, 1), 3, 0.0, 0.0, 0.0)
+    bars[1] = DailyBar(bars[1].day, 10.0, 12.0, 9.0, 10.0, 10.0, 0)  # -90% jump
+    assert audit_bars("SPY", bars).errors
+    report = audit_bars("^VIX", bars)
+    assert not report.errors and report.warnings

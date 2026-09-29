@@ -49,6 +49,10 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
     if not bars:
         report.errors.append("no rows")
         return report
+    # Indices, yields and futures are not investable prices: VIX can double in a day, CL=F went
+    # negative in 2020, ^IRX touched zero. Price-level problems are warnings, not errors.
+    macro = symbol.startswith("^") or "=" in symbol or symbol.upper().endswith(".NYB")
+    price_issues = report.warnings if macro else report.errors
     for prev, cur in zip(bars, bars[1:], strict=False):
         if cur.day <= prev.day:
             report.errors.append(f"{cur.day}: duplicate or out-of-order date")
@@ -58,12 +62,12 @@ def audit_bars(symbol: str, bars: list[DailyBar]) -> QualityReport:
             report.warnings.append(f"{prev.day}->{cur.day}: {gap}-day calendar gap")
         ret = cur.adj_close / prev.adj_close - 1.0 if prev.adj_close > 0 else 0.0
         if abs(ret) > MAX_ABS_DAILY_RETURN:
-            report.errors.append(f"{cur.day}: adjusted return {ret:+.1%} exceeds limit")
+            price_issues.append(f"{cur.day}: adjusted return {ret:+.1%} exceeds limit")
     for b in bars:
         if min(b.open, b.high, b.low, b.close, b.adj_close) <= 0:
-            report.errors.append(f"{b.day}: non-positive price")
+            price_issues.append(f"{b.day}: non-positive price")
         elif b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high):
-            report.errors.append(f"{b.day}: inconsistent OHLC")
+            price_issues.append(f"{b.day}: inconsistent OHLC")
         if b.volume < 0:
             report.errors.append(f"{b.day}: negative volume")
     return report

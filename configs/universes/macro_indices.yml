@@ -1,0 +1,20 @@
+name: macro_indices
+description: 指数、波动率、利率与期货代码（Yahoo 无分红，复权价等于收盘价）
+symbols:
+  # 股指
+  - ^GSPC
+  - ^IXIC
+  - ^DJI
+  - ^RUT
+  - ^NDX
+  # 波动率
+  - ^VIX
+  # 美债收益率
+  - ^IRX
+  - ^FVX
+  - ^TNX
+  - ^TYX
+  # 美元指数与期货
+  - DX-Y.NYB
+  - GC=F
+  - CL=F

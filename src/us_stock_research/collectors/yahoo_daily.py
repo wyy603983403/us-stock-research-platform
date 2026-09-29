@@ -23,7 +23,7 @@ CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 USER_AGENT = "Mozilla/5.0 (research; us-stock-research-platform)"
 
 
-def parse_chart(payload: dict[str, Any]) -> list[DailyBar]:
+def parse_chart(payload: dict[str, Any], allow_missing_adj: bool = False) -> list[DailyBar]:
     chart = payload.get("chart") or {}
     if chart.get("error"):
         raise ValueError(f"Yahoo chart error: {chart['error']}")
@@ -35,6 +35,8 @@ def parse_chart(payload: dict[str, Any]) -> list[DailyBar]:
     stamps: list[int] = result.get("timestamp") or []
     quote = result["indicators"]["quote"][0]
     adj = (result["indicators"].get("adjclose") or [{}])[0].get("adjclose")
+    if adj is None and allow_missing_adj:
+        adj = quote["close"]  # indices/futures carry no dividends or splits
     if adj is None:
         raise ValueError("payload has no adjclose series; request includeAdjustedClose=true")
     bars: list[DailyBar] = []
@@ -82,7 +84,9 @@ def fetch_symbol(
     response = client.get(CHART_URL.format(symbol=symbol.upper()), params=params)
     response.raise_for_status()
     payload = response.json()
-    return parse_chart(payload), parse_dividends(payload)
+    # Indices (^GSPC), futures (GC=F) and FX (DX-Y.NYB) have no adjusted series
+    unadjusted = symbol.startswith("^") or "=" in symbol or symbol.endswith(".NYB")
+    return parse_chart(payload, allow_missing_adj=unadjusted), parse_dividends(payload)
 
 
 def main(argv: list[str] | None = None) -> int:

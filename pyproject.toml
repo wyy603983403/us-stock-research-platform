@@ -19,6 +19,7 @@ storage = ["duckdb>=1.1,<2"]
 
 [project.scripts]
 usr-collect-daily = "us_stock_research.collectors.yahoo_daily:main"
+usr-collect-universe = "us_stock_research.collectors.universe:main"
 usr-audit-ohlcv = "us_stock_research.quality.ohlcv:main"
 usr-validate-research = "us_stock_research.research.contracts:main"
 usr-snapshot = "us_stock_research.research.snapshots:main"
