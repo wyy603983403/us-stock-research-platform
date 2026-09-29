@@ -1,6 +1,6 @@
 schema_version: 1
 name: etf_trend_baseline
-status: draft
+status: frozen
 strategy: trend_sma_v1
 question: 对主要美股与跨资产 ETF 使用 200 日均线趋势开关，能否把最差 12 个月亏损压到 25% 以内，同时长期收益不明显落后 SPY？
 hypothesis: 价格在 200 日均线下方时转入短债，可以避开 2008、2022 类长熊市的大部分跌幅，代价是震荡市的来回止损。
@@ -10,8 +10,8 @@ data:
   universe: [SPY, QQQ, IWM, EFA, IEF, GLD, SHY]
   start: "2005-01-01"
   end: "2025-12-31"
-  snapshot_id: null
-  quality_report: null
+  snapshot_id: daily-bundle-v1:sha256:43eeb58b8611a88d00bdde5c4a438b1a1951e2c2b75efca599b931673d9d6d3a
+  quality_report: artifacts/quality/etf_trend_baseline.json
 parameters:
   sma_days: 200
   lookback_days: 252
