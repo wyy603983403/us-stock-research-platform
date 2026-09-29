@@ -700,3 +700,74 @@ def test_alpaca_symbol_mapping_and_retry() -> None:
         sleep=waits.append,
     )
     assert len(bars) == 2 and waits == [60] and seen[-1]["page_token"] == "p2"
+
+
+def test_intraday_session_dst_and_early_close() -> None:
+    from datetime import datetime
+
+    from us_stock_research.quality import intraday as qi
+
+    assert qi.session_utc(date(2024, 1, 10)) == (
+        datetime(2024, 1, 10, 14, 30),
+        datetime(2024, 1, 10, 21, 0),
+    )
+    assert qi.session_utc(date(2024, 7, 10))[0] == datetime(2024, 7, 10, 13, 30)
+    assert qi.early_close(date(2024, 11, 29)) and qi.session_minutes(date(2024, 11, 29)) == 210
+    assert qi.early_close(date(2024, 7, 3)) and qi.early_close(date(2024, 12, 24))
+    assert not qi.early_close(date(2021, 12, 24))  # observed Christmas holiday
+    assert not qi.early_close(date(2024, 7, 5))
+    assert qi.session_minutes(date(2024, 3, 11)) == 390  # first Monday after DST switch
+
+
+def _minute_rows(day: date, price: float, minutes: int = 390, start_hour: int = 13) -> list[Any]:
+    from datetime import datetime, timedelta
+
+    t0 = datetime(day.year, day.month, day.day, start_hour, 30)
+    return [
+        (t0 + timedelta(minutes=i), price, price * 1.001, price * 0.999, price, 100.0)
+        for i in range(minutes)
+    ]
+
+
+def test_intraday_audit_flags_missing_extra_ohlc_and_splits() -> None:
+    from datetime import datetime
+
+    from us_stock_research.quality import intraday as qi
+
+    days = [date(2024, 6, 3), date(2024, 6, 4), date(2024, 6, 5), date(2024, 6, 6)]
+    rows: list[Any] = []
+    for d in days:
+        rows += _minute_rows(d, 100.0)
+    rows.append((datetime(2024, 6, 3, 11, 0), 100.0, 100.0, 100.0, 100.0, 1.0))  # pre-market
+    closes = {days[0]: 100.0, days[1]: 100.5, days[2]: 50.0, days[3]: 100.0}
+    ok = qi.audit_intraday("X", rows, closes)
+    assert ok["passed"], ok["reasons"]
+    assert ok["outside_session"] == 1 and ok["close_split_factor_days"] == 1
+    assert ok["mean_coverage"] == 1.0
+
+    bad = [r for r in rows if r[0].date() != days[1]]  # a missing trading day
+    bad += _minute_rows(date(2024, 6, 8), 100.0, 5)  # Saturday
+    bad.append((datetime(2024, 6, 6, 15, 0), 100.0, 99.0, 98.0, 100.0, 1.0))  # high < close
+    closes[days[3]] = 90.0  # 11% gap, not a split factor
+    out = qi.audit_intraday("X", bad, closes)
+    text = " ".join(out["reasons"])
+    assert not out["passed"]
+    assert "missing" in text and "holidays/weekends" in text and "OHLC" in text
+    assert "daily close" in text
+
+
+def test_intraday_source_compare_detects_label_shift() -> None:
+    from datetime import timedelta
+
+    from us_stock_research.quality import intraday as qi
+
+    day = date(2024, 6, 3)
+    a = [
+        (r[0], r[1], r[2], r[3], 100.0 + i * 0.5, r[5])
+        for i, r in enumerate(_minute_rows(day, 100.0))
+    ]
+    same = qi.compare_sources(a, list(a))
+    assert same["passed"] and same["common_minutes"] == 390
+    shifted = [(r[0] + timedelta(minutes=1), *r[1:]) for r in a]
+    out = qi.compare_sources(a, shifted)
+    assert not out["passed"] and any("shifted" in x for x in out["reasons"])

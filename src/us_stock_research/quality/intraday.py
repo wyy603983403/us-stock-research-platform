@@ -1,0 +1,282 @@
+"""Quality gate for 1-minute bars (Alpaca / Tiingo IEX feeds) and a two-source cross-check.
+
+Timestamps are stored as naive UTC. The regular NYSE session is 09:30-16:00 New York time
+(13:00 close on early-close days), so DST is handled by converting the session bounds, not
+every row. Checks per symbol:
+
+* trading days inside the data range with no regular-session bar (missing days);
+* regular-session bars on NYSE holidays/weekends (extra days: a timestamp or calendar bug);
+* OHLC consistency (high >= open/close >= low > 0);
+* last regular-session close vs. the daily close already stored from Yahoo. Minute prices are
+  unadjusted, so days whose ratio is a clean split factor (2:1, 1:10 ...) are counted separately
+  instead of as mismatches;
+* minute coverage (bars / session minutes). IEX is one venue, so thin names legitimately miss
+  minutes: reported as information, not failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, time, timedelta
+from functools import cache
+from pathlib import Path
+from statistics import median
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from us_stock_research.calendar import is_trading_day, nyse_holidays, trading_days
+from us_stock_research.storage import add_store_args, open_store, settings_from_args
+from us_stock_research.tables import TableStore
+
+ET = ZoneInfo("America/New_York")
+SOURCES = {"alpaca": "intraday_1min_alpaca", "tiingo": "intraday_1min"}
+COLUMNS = "ts, open, high, low, close, volume"
+CLOSE_TOLERANCE = 0.02  # IEX last trade vs consolidated close
+SPLIT_FACTORS = (1.5, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50)
+MAX_MISSING_FRACTION = 0.02
+MAX_CLOSE_MISMATCH_FRACTION = 0.01
+
+Row = tuple[Any, ...]  # (ts naive UTC, open, high, low, close, volume)
+
+
+def early_close(day: date) -> bool:
+    """13:00 close: Jul 3 and Dec 24 when they fall Mon-Thu, and the day after Thanksgiving."""
+    if not is_trading_day(day):
+        return False
+    if (day.month, day.day) in ((7, 3), (12, 24)) and day.weekday() < 4:
+        return True
+    thanksgiving = next(
+        d for d in nyse_holidays(day.year) if d.month == 11 and d.weekday() == 3 and d.day > 21
+    )
+    return day == thanksgiving + timedelta(days=1)
+
+
+@cache
+def session_utc(day: date) -> tuple[datetime, datetime]:
+    """Regular session [open, close) of an NYSE day as naive UTC datetimes."""
+    close_at = time(13, 0) if early_close(day) else time(16, 0)
+
+    def to_utc(t: time) -> datetime:
+        return datetime.combine(day, t, tzinfo=ET).astimezone(UTC).replace(tzinfo=None)
+
+    return to_utc(time(9, 30)), to_utc(close_at)
+
+
+def session_minutes(day: date) -> int:
+    start, stop = session_utc(day)
+    return int((stop - start).total_seconds() // 60)
+
+
+def regular_session(rows: Iterable[Row]) -> list[Row]:
+    """Keep only bars inside the regular session of a trading day (for research use)."""
+    out: list[Row] = []
+    for row in rows:
+        day = row[0].date()
+        if is_trading_day(day):
+            start, stop = session_utc(day)
+            if start <= row[0] < stop:
+                out.append(row)
+    return out
+
+
+def _split_like(ratio: float) -> bool:
+    for k in SPLIT_FACTORS:
+        for target in (k, 1 / k):
+            if abs(ratio / target - 1) <= CLOSE_TOLERANCE:
+                return True
+    return False
+
+
+def audit_intraday(
+    symbol: str, rows: list[Row], daily_close: dict[date, float] | None = None
+) -> dict[str, Any]:
+    per_day: dict[date, dict[str, Any]] = {}
+    outside = 0
+    ohlc_errors: list[str] = []
+    for ts, o, h, low, c, _v in rows:
+        day = ts.date()
+        start, stop = session_utc(day)
+        if not start <= ts < stop:
+            outside += 1
+            continue
+        info = per_day.setdefault(day, {"n": 0, "bad": 0, "close": c, "last": ts})
+        info["n"] += 1
+        if ts >= info["last"]:
+            info["last"], info["close"] = ts, c
+        if min(o, h, low, c) <= 0 or h < max(o, c) - 1e-9 or low > min(o, c) + 1e-9:
+            info["bad"] += 1
+            if len(ohlc_errors) < 10:
+                ohlc_errors.append(ts.isoformat())
+    bad_bars = sum(v["bad"] for v in per_day.values())
+    days = sorted(per_day)
+    result: dict[str, Any] = {"symbol": symbol, "bars": len(rows), "outside_session": outside}
+    if not days:
+        return {**result, "days": 0, "passed": False, "reasons": ["no regular-session bars"]}
+    expected = trading_days(days[0], days[-1])
+    missing = sorted(set(expected) - set(days))
+    extra = [d for d in days if not is_trading_day(d)]
+    coverage = [per_day[d]["n"] / session_minutes(d) for d in days if is_trading_day(d)]
+    mismatches: list[tuple[date, float]] = []
+    split_days = 0
+    compared = 0
+    if daily_close:
+        for d in days:
+            ref = daily_close.get(d)
+            if not ref:
+                continue
+            compared += 1
+            ratio = per_day[d]["close"] / ref
+            if abs(ratio - 1) <= CLOSE_TOLERANCE:
+                continue
+            if _split_like(ratio):
+                split_days += 1
+            else:
+                mismatches.append((d, ratio - 1))
+    mismatches.sort(key=lambda x: -abs(x[1]))
+    missing_fraction = len(missing) / len(expected)
+    mismatch_fraction = len(mismatches) / compared if compared else 0.0
+    reasons: list[str] = []
+    if bad_bars:
+        reasons.append(f"{bad_bars} bars violate OHLC ordering")
+    if extra:
+        reasons.append(f"{len(extra)} regular-session days on NYSE holidays/weekends")
+    if missing_fraction > MAX_MISSING_FRACTION:
+        reasons.append(f"{len(missing)} trading days missing ({missing_fraction:.1%})")
+    if mismatch_fraction > MAX_CLOSE_MISMATCH_FRACTION:
+        reasons.append(
+            f"{len(mismatches)} days last close differs from daily close by >"
+            f"{CLOSE_TOLERANCE:.0%} ({mismatch_fraction:.1%})"
+        )
+    return {
+        **result,
+        "first": days[0].isoformat(),
+        "last": days[-1].isoformat(),
+        "days": len(days),
+        "missing_days": len(missing),
+        "missing_sample": [d.isoformat() for d in missing[:10]],
+        "extra_days": [d.isoformat() for d in extra[:10]],
+        "early_close_days": sum(1 for d in days if early_close(d)),
+        "mean_coverage": round(sum(coverage) / len(coverage), 4) if coverage else 0.0,
+        "median_coverage": round(median(coverage), 4) if coverage else 0.0,
+        "low_coverage_days": sum(1 for x in coverage if x < 0.5),
+        "ohlc_error_bars": bad_bars,
+        "ohlc_error_sample": ohlc_errors,
+        "close_compared_days": compared,
+        "close_mismatch_days": len(mismatches),
+        "close_split_factor_days": split_days,
+        "close_worst": [{"date": d.isoformat(), "diff": round(x, 4)} for d, x in mismatches[:5]],
+        "passed": not reasons,
+        "reasons": reasons,
+    }
+
+
+def compare_sources(a: list[Row], b: list[Row], tolerance: float = 0.002) -> dict[str, Any]:
+    """Minute-by-minute close agreement on the overlapping regular session.
+
+    Also tries +-1 minute shifts: if a shifted alignment agrees better, the vendors label bars
+    differently (bar start vs. bar end) and every intraday signal would be off by a minute.
+    """
+    ra = {r[0]: r[4] for r in regular_session(a)}
+    rb = {r[0]: r[4] for r in regular_session(b)}
+    if not ra or not rb:
+        return {"common_minutes": 0, "passed": False, "reasons": ["one side has no data"]}
+    lo = max(min(ra), min(rb))
+    hi = min(max(ra), max(rb))
+    ra = {t: v for t, v in ra.items() if lo <= t <= hi}
+    rb = {t: v for t, v in rb.items() if lo <= t <= hi}
+
+    def agreement(shift: int) -> tuple[int, int, list[float]]:
+        diffs = [
+            abs(rb[t + timedelta(minutes=shift)] / v - 1)
+            for t, v in ra.items()
+            if t + timedelta(minutes=shift) in rb
+        ]
+        return len(diffs), sum(1 for x in diffs if x > tolerance), diffs
+
+    by_shift = {s: agreement(s) for s in (-1, 0, 1)}
+    common, bad, diffs = by_shift[0]
+    rate = {s: (n - k) / n if n else 0.0 for s, (n, k, _d) in by_shift.items()}
+    best = max(rate, key=lambda s: rate[s])
+    reasons: list[str] = []
+    if not common:
+        reasons.append("no common minutes")
+    elif bad / common > 0.01:
+        reasons.append(f"{bad / common:.1%} of common minutes differ by >{tolerance:.1%}")
+    if best != 0 and rate[best] > rate[0] + 0.05:
+        reasons.append(f"bars align better shifted by {best:+d} minute: label convention differs")
+    return {
+        "overlap": [lo.isoformat(), hi.isoformat()],
+        "minutes_a": len(ra),
+        "minutes_b": len(rb),
+        "common_minutes": common,
+        "mismatch_minutes": bad,
+        "median_abs_diff_bps": round(median(diffs) * 1e4, 3) if diffs else None,
+        "agreement_by_shift": {str(s): round(r, 4) for s, r in rate.items()},
+        "passed": not reasons,
+        "reasons": reasons,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Audit stored 1-minute bars.")
+    parser.add_argument("symbols", nargs="*")
+    parser.add_argument("--all", action="store_true", help="every symbol stored for --source")
+    parser.add_argument("--source", choices=sorted(SOURCES), default="alpaca")
+    parser.add_argument(
+        "--crosscheck", action="store_true", help="also compare Alpaca vs Tiingo where both exist"
+    )
+    parser.add_argument("--output", type=Path, default=Path("artifacts/quality/intraday.json"))
+    add_store_args(parser)
+    args = parser.parse_args(argv)
+    settings = settings_from_args(args)
+    tables = TableStore.from_settings(settings)
+    daily = open_store(settings)
+    kind = SOURCES[args.source]
+    symbols = [s.upper() for s in args.symbols]
+    if args.all:
+        symbols += tables.keys(kind)
+    symbols = list(dict.fromkeys(symbols))
+    if not symbols:
+        print("give symbols or --all", file=sys.stderr)
+        return 2
+    audits: dict[str, Any] = {}
+    checks: dict[str, Any] = {}
+    for i, symbol in enumerate(symbols, 1):
+        print(f"[{i}/{len(symbols)}] {symbol}", file=sys.stderr, flush=True)
+        if not tables.has(kind, symbol):
+            audits[symbol] = {"passed": False, "reasons": [f"no {args.source} minute data"]}
+            continue
+        rows = tables.read(kind, symbol, COLUMNS)
+        closes = (
+            {b.day: b.close for b in daily.read_bars(symbol)} if daily.has_bars(symbol) else None
+        )
+        audits[symbol] = audit_intraday(symbol, rows, closes)
+        if args.crosscheck:
+            other = SOURCES["tiingo" if args.source == "alpaca" else "alpaca"]
+            if tables.has(other, symbol):
+                checks[symbol] = compare_sources(rows, tables.read(other, symbol, COLUMNS))
+    failed = sorted(s for s, a in audits.items() if not a["passed"])
+    report = {
+        "source": args.source,
+        "symbols": len(audits),
+        "passed": len(audits) - len(failed),
+        "failed": {s: audits[s]["reasons"] for s in failed},
+        "crosscheck_failed": {s: c["reasons"] for s, c in checks.items() if not c["passed"]},
+        "audits": audits,
+        "crosscheck": checks,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    if len(audits) <= 5:
+        print(json.dumps({"audits": audits, "crosscheck": checks}, indent=2, ensure_ascii=False))
+    brief = {k: report[k] for k in ("source", "symbols", "passed", "failed", "crosscheck_failed")}
+    brief["report"] = str(args.output)
+    print(json.dumps(brief, indent=2, ensure_ascii=False))
+    return 0 if not failed and not report["crosscheck_failed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
