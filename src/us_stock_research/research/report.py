@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError as exc:
         raise SystemExit("needs quantstats: pip install -e '.[report]'") from exc
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    qs.reports.html(
+    qs.reports.html(  # type: ignore[no-untyped-call]  # quantstats.reports.html is untyped
         strategy,
         benchmark=benchmark,
         title=f"{artifact['study']} vs {artifact['benchmark']['symbol']}",

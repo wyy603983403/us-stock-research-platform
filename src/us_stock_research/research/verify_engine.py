@@ -96,7 +96,9 @@ def independent_curve(c: StudyContract, bundle: Bundle) -> tuple[list[Any], list
         equity *= float(values.iloc[-1]) if len(values) else 1.0
         if len(values):
             end_values = growth.iloc[-1] * pd.Series(weights)
-            weights = (end_values / end_values.sum()).to_dict()
+            weights = {
+                str(k): float(v) for k, v in (end_values / end_values.sum()).to_dict().items()
+            }
     return panel.days[fill_days[0] :], curve
 
 

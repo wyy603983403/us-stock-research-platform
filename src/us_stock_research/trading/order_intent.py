@@ -251,9 +251,9 @@ def render_review(intent: dict[str, Any]) -> str:
 
 
 def write_outputs(intent: dict[str, Any], out_dir: Path) -> Path:
-    folder = out_dir / intent["study"]
+    folder: Path = out_dir / str(intent["study"])
     folder.mkdir(parents=True, exist_ok=True)
-    base = folder / intent["signal_day"]
+    base: Path = folder / str(intent["signal_day"])
     text = json.dumps(intent, indent=2, ensure_ascii=False) + "\n"
     base.with_suffix(".json").write_text(text)
     base.with_suffix(".md").write_text(render_review(intent))

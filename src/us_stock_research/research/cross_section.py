@@ -39,7 +39,7 @@ REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "in
 
 
 def load_xs_contract(path: Path) -> dict[str, Any]:
-    raw = yaml.safe_load(path.read_text())
+    raw: dict[str, Any] = yaml.safe_load(path.read_text())
     if raw.get("kind") != "cross_section":
         raise ValueError(f"{path} is not a cross_section contract")
     missing = [k for k in REQUIRED if k not in raw]

@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_aliases = (yaml.safe_load(args.aliases.read_text()) or {}).get("aliases") or {}
         aliases = {str(k): str(v) for k, v in raw_aliases.items()}
     data_end = max(f[1] for fl in filings.values() for f in fl)
-    rows, stats = choose(history, filings, overrides, args.since, aliases, data_end)  # type: ignore[arg-type]
+    rows, stats = choose(history, filings, overrides, args.since, aliases, data_end)
     # a renamed ticker (FB -> META) filed under its new symbol after the rename; nothing to do,
     # the interval of each symbol is matched against filings made under that same symbol.
     tables.write("meta", "ticker_cik", SCHEMA, [[r[k] for r in rows] for k in range(7)], "symbol")

@@ -164,7 +164,7 @@ def compare(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> dict[str, Any]:
     if [m["date"] for m in a] != [m["date"] for m in b]:
         return {"match": False, "reason": "different rebalance dates"}
     worst = {"strategy": 0.0, "equal_weight": 0.0}
-    bad = []
+    bad: list[dict[str, Any]] = []
     pick_mismatch = 0
     for x, y in zip(a, b, strict=True):
         for k in worst:
