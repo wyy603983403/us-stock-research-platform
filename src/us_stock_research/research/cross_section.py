@@ -342,6 +342,100 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     return fails
 
 
+def compare_to_reference(
+    months: list[dict[str, Any]],
+    prices: Prices,
+    reference: str,
+    lag: int,
+    min_coverage: float,
+) -> dict[str, Any]:
+    """Engine's equal-weight universe vs an equal-weight index ETF (e.g. RSP), month by month.
+
+    Validates membership, delisting handling and aliases without looking at the signal: a
+    point-in-time equal-weight S&P 500 should track RSP closely (RSP rebalances quarterly and
+    charges ~0.2%/yr; the engine needs 13 months of history, so recent IPOs are missing).
+    """
+    index = {d.isoformat(): i for i, d in enumerate(prices.days)}
+    pairs: list[tuple[str, float, float]] = []
+    for m, nxt in zip(months, months[1:], strict=False):
+        if m["coverage"] < min_coverage:
+            continue
+        a = prices.at(reference, index[m["date"]] + lag, MAX_STALE_DAYS)
+        b = prices.at(reference, index[nxt["date"]] + lag, MAX_STALE_DAYS)
+        if a and b:
+            pairs.append((m["date"], m["equal_weight"], b[1] / a[1] - 1))
+    if len(pairs) < 12:
+        return {"months": len(pairs), "error": "too few months with enough coverage"}
+    ew = [p[1] for p in pairs]
+    ref = [p[2] for p in pairs]
+    n = len(pairs)
+    me, mr = sum(ew) / n, sum(ref) / n
+    cov = sum((x - me) * (y - mr) for x, y in zip(ew, ref, strict=True)) / (n - 1)
+    sd_e = math.sqrt(sum((x - me) ** 2 for x in ew) / (n - 1))
+    sd_r = math.sqrt(sum((y - mr) ** 2 for y in ref) / (n - 1))
+    diff = [x - y for x, y in zip(ew, ref, strict=True)]
+    md = sum(diff) / n
+    te = math.sqrt(sum((d - md) ** 2 for d in diff) / (n - 1)) * math.sqrt(12)
+    years: dict[str, list[tuple[float, float]]] = {}
+    for d, x, y in pairs:
+        years.setdefault(d[:4], []).append((x, y))
+    by_year = {}
+    for year, rows in sorted(years.items()):
+        ge = math.prod(1 + x for x, _ in rows) - 1
+        gr = math.prod(1 + y for _, y in rows) - 1
+        by_year[year] = {"months": len(rows), "engine": round(ge, 4), "reference": round(gr, 4)}
+    return {
+        "reference": reference,
+        "months": n,
+        "first": pairs[0][0],
+        "last": pairs[-1][0],
+        "correlation": cov / (sd_e * sd_r) if sd_e * sd_r > 0 else None,
+        "mean_monthly_diff": md,
+        "annualized_diff": (1 + md) ** 12 - 1,
+        "tracking_error_annual": te,
+        "by_year": by_year,
+    }
+
+
+def validate_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check the equal-weight universe against RSP.")
+    parser.add_argument("--contract", type=Path, required=True)
+    parser.add_argument("--reference", default="RSP")
+    parser.add_argument("--min-coverage", type=float, default=0.9)
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
+    parser.add_argument("--aliases", type=Path, default=Path("configs/ticker_aliases.yml"))
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+    contract = load_xs_contract(args.contract)
+    tables = TableStore.from_settings(load_settings())
+    uni = contract["universe"]
+    rows = tables.read("meta", "sp500_history", "symbol, start_date, end_date")
+    prices = load_prices(
+        tables, uni["start"] - timedelta(days=500), uni["end"] + timedelta(days=45)
+    )
+    apply_aliases(prices, load_aliases(args.aliases))
+    if args.reference not in prices.series:
+        print(f"{args.reference} has no stored daily bars; download it first", file=sys.stderr)
+        return 2
+    quarantined = set(load_exceptions(args.exceptions)[1])
+    result = run(contract, prices, [tuple(r) for r in rows], excluded=quarantined)
+    # only the benchmark side is reported: the signal's results stay unseen until the real run
+    report = compare_to_reference(
+        result["months"],
+        prices,
+        args.reference,
+        int(contract["execution_lag_days"]),
+        args.min_coverage,
+    )
+    report["coverage_by_month"] = {m["date"]: round(m["coverage"], 3) for m in result["months"]}
+    text = json.dumps(report, indent=2, ensure_ascii=False)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(text + "\n")
+    print(json.dumps({k: v for k, v in report.items() if k != "coverage_by_month"}, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, required=True)

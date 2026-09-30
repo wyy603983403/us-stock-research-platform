@@ -1116,3 +1116,19 @@ def test_last_closed_session() -> None:
     assert last_closed_session(datetime(2026, 9, 30, 15, 0)) == date(2026, 9, 29)  # mid-session
     assert last_closed_session(datetime(2026, 10, 4, 12, 0)) == date(2026, 10, 2)  # Sunday
     assert last_closed_session(datetime(2024, 11, 29, 18, 30)) == date(2024, 11, 29)  # 13:00 ET
+
+
+def test_equal_weight_reference_comparison() -> None:
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import cross_section as xs
+
+    days = trading_days(date(2020, 1, 1), date(2021, 12, 31))
+    ref = [100.0 * (1.001**i) for i in range(len(days))]
+    prices = xs.Prices(days, {"RSP": ref})  # type: ignore[dict-item]
+    ends = xs.month_end_indices(days, date(2020, 1, 1), date(2021, 12, 31))
+    months = []
+    for t, t2 in zip(ends, ends[1:], strict=False):
+        r = ref[min(t2 + 1, len(days) - 1)] / ref[t + 1] - 1
+        months.append({"date": days[t].isoformat(), "coverage": 1.0, "equal_weight": r})
+    out = xs.compare_to_reference(months, prices, "RSP", 1, 0.9)
+    assert out["months"] == len(months) - 1 and abs(out["mean_monthly_diff"]) < 1e-12
