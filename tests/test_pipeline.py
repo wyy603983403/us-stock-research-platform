@@ -1104,3 +1104,15 @@ def test_reviewed_gap_can_be_accepted_by_first_date() -> None:
     report.errors = ["17 NYSE trading days missing (2017-08-07 .. 2017-08-31)", "2020-01-02: x"]
     out = _apply_reviewed(report, {"2017-08-07": "reviewed"})
     assert out.errors == ["2020-01-02: x"] and "reviewed" in out.warnings[0]
+
+
+def test_last_closed_session() -> None:
+    from datetime import datetime
+
+    from us_stock_research.quality.intraday import last_closed_session
+
+    # Beijing 07:30 on 2026-10-01 = 2026-09-30 23:30 UTC: that day's session closed at 20:00 UTC
+    assert last_closed_session(datetime(2026, 9, 30, 23, 30)) == date(2026, 9, 30)
+    assert last_closed_session(datetime(2026, 9, 30, 15, 0)) == date(2026, 9, 29)  # mid-session
+    assert last_closed_session(datetime(2026, 10, 4, 12, 0)) == date(2026, 10, 2)  # Sunday
+    assert last_closed_session(datetime(2024, 11, 29, 18, 30)) == date(2024, 11, 29)  # 13:00 ET

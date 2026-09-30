@@ -14,7 +14,7 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from us_stock_research.collectors.tiingo_intraday import (
     year_chunks,
 )
 from us_stock_research.config import load_settings
+from us_stock_research.quality.intraday import last_closed_session
 from us_stock_research.storage import open_store
 from us_stock_research.tables import TableStore
 
@@ -124,7 +125,7 @@ def collect_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--end",
         type=date.fromisoformat,
-        default=datetime.now(UTC).date() - timedelta(days=1),  # never store a half-finished day
+        default=last_closed_session(datetime.now(UTC)),  # never store a half-finished day
     )
     parser.add_argument("--pause", type=float, default=0.3)
     parser.add_argument("--report", type=Path)

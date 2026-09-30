@@ -68,6 +68,20 @@ def session_utc(day: date) -> tuple[datetime, datetime]:
     return to_utc(time(9, 30)), to_utc(close_at)
 
 
+def last_closed_session(now_utc: datetime) -> date:
+    """Latest NYSE trading day whose regular session has closed by ``now_utc`` (aware or naive UTC).
+
+    Downloaders use it as the default end date so a run during (or before) the US session never
+    stores a half-finished day, and a run after the close still picks that day up.
+    """
+    now = now_utc.astimezone(UTC).replace(tzinfo=None) if now_utc.tzinfo else now_utc
+    day = now.date()
+    while True:
+        if is_trading_day(day) and session_utc(day)[1] <= now:
+            return day
+        day -= timedelta(days=1)
+
+
 def session_minutes(day: date) -> int:
     start, stop = session_utc(day)
     return int((stop - start).total_seconds() // 60)

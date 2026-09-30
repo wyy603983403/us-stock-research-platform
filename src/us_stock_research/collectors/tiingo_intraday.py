@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from us_stock_research.config import load_settings
+from us_stock_research.quality.intraday import last_closed_session
 from us_stock_research.tables import TableStore
 
 IEX_URL = "https://api.tiingo.com/iex/{symbol}/prices"
@@ -220,7 +221,7 @@ def collect_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--end",
         type=date.fromisoformat,
-        default=datetime.now(UTC).date() - timedelta(days=1),  # never store a half-finished day
+        default=last_closed_session(datetime.now(UTC)),  # never store a half-finished day
     )
     parser.add_argument("--freq", default="1min")
     parser.add_argument("--pause", type=float, default=2.0)
