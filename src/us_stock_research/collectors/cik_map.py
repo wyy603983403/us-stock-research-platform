@@ -139,8 +139,8 @@ def choose(
                 if found:
                     source = f"{rule}:{cand}"
                     break
-        if not found and data_end is not None and start > data_end:
-            # membership began after the last filing in the data: take whoever filed most
+        if not found and data_end is not None and start >= data_end - timedelta(days=365):
+            # membership began near/after the end of the data: take whoever filed most
             # recently under the old ticker (renames) or this ticker, if within a year
             order = [(symbol, "recent")]
             if symbol in aliases_back:
