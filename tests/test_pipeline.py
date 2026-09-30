@@ -1270,11 +1270,31 @@ def test_cik_map_picks_the_company_using_the_ticker_during_membership() -> None:
         ("NONE", date(2010, 1, 1), None),
         ("OLD", date(1996, 1, 2), date(2005, 1, 1)),
     ]
-    rows, stats = choose(intervals, filings, {"NONE": 42}, date(2009, 1, 1))
+    filings["DUP"] = [  # two filers alternating, each run of two: no clear owner
+        (1 + (m // 2) % 2, date(2012, m + 1, 1), "AB"[(m // 2) % 2]) for m in range(8)
+    ]
+    filings["ETN"] = [(1001, date(2011, 5, 1), "EATON CORP")] * 3 + [
+        (2002, date(2013, 5, 1), "EATON CORP PLC")
+    ] * 3  # re-domiciled: new CIK from late 2012
+    filings["BTU"] = [(3003, date(2012, 1, 1), "PEABODY")] * 2
+    filings["FOXA"] = [(4004, date(2020, 1, 1), "FOX CORP")] * 2
+    filings["BK"] = [(5005, date(2025, 1, 1), "BANK OF NEW YORK MELLON")] * 2
+    intervals += [
+        ("ETN", date(2000, 1, 1), None),
+        ("BTUUQ", date(2010, 1, 1), date(2015, 1, 1)),
+        ("FOX", date(2019, 3, 1), None),
+        ("BNY", date(2024, 12, 1), None),
+    ]
+    rows, stats = choose(intervals, filings, {"NONE": 42}, date(2009, 1, 1), {"BK": "BNY"})
     got = {(r[0], r[1]): (r[3], r[5]) for r in rows}
     assert got[("AAL", date(2015, 3, 23))] == (6201, "insider")
     assert got[("Q", date(2000, 7, 6))] == (68622, "insider")
     assert got[("Q", date(2025, 11, 3))] == (9999, "insider")
     assert got[("DUP", date(2011, 1, 1))] == (None, "ambiguous")
     assert got[("NONE", date(2010, 1, 1))] == (42, "override")
+    assert got[("ETN", date(2000, 1, 1))] == (1001, "insider+split")
+    assert got[("ETN", date(2013, 5, 1))] == (2002, "insider+split")
+    assert got[("BTUUQ", date(2010, 1, 1))] == (3003, "bankrupt:BTU")
+    assert got[("FOX", date(2019, 3, 1))] == (4004, "class:FOXA")
+    assert got[("BNY", date(2024, 12, 1))] == (5005, "alias:BK")
     assert stats["before_since"] == 1

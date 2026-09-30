@@ -258,13 +258,23 @@ def parse_insider(content: bytes) -> list[list[Any]]:
     return out
 
 
-def _download(client: httpx.Client, urls: list[str]) -> bytes | None:
+def _download(
+    client: httpx.Client, urls: list[str], attempts: int = 4, wait: float = 20.0
+) -> bytes | None:
+    """First URL that exists; dropped connections on large files are retried."""
     for url in urls:
-        response = client.get(url)
-        if response.status_code == 404:
-            continue
-        response.raise_for_status()
-        return response.content
+        for attempt in range(attempts):
+            try:
+                response = client.get(url)
+            except (httpx.TransportError, httpx.RemoteProtocolError):
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(wait * (attempt + 1))
+                continue
+            if response.status_code == 404:
+                break
+            response.raise_for_status()
+            return response.content
     return None
 
 

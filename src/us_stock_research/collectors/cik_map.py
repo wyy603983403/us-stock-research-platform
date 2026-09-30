@@ -41,14 +41,80 @@ def yahoo(symbol: str) -> str:
     return symbol.strip().upper().replace(".", "-").replace("/", "-")
 
 
+def _in_interval(
+    filings: list[tuple[int, date, str]], start: date, end: date | None
+) -> list[tuple[int, date, str]]:
+    kept = [f for f in filings if f[1] >= start and (end is None or f[1] < end)]
+    return sorted(kept, key=lambda f: (f[1], f[0]))  # by filing date
+
+
+def segments(found: list[tuple[int, date, str]]) -> list[tuple[int, date, str, int]] | None:
+    """Split a membership interval where the filer's CIK changes over time.
+
+    A company that re-domiciles or reorganises (Eaton 2012, Medtronic 2015, Cigna 2018) keeps its
+    ticker but files under a new CIK from some date on: the filings form consecutive runs
+    A..A B..B. Returns ``[(cik, first_filing, name, n), ...]`` for such clean sequences, the
+    dominant CIK when one filer has >= 70% of filings (parent and subsidiary both reporting),
+    or None when CIKs interleave with no clear owner.
+    """
+    runs: list[list[Any]] = []
+    for cik, filed, name in found:
+        if runs and runs[-1][0] == cik:
+            runs[-1][3] += 1
+        else:
+            runs.append([cik, filed, name, 1])
+    runs = [r for r in runs if r[3] >= 2] or runs  # drop single stray filings
+    merged: list[list[Any]] = []
+    for r in runs:
+        if merged and merged[-1][0] == r[0]:
+            merged[-1][3] += r[3]
+        else:
+            merged.append(list(r))
+    ciks = [r[0] for r in merged]
+    if len(ciks) == len(set(ciks)):
+        return [(r[0], r[1], r[2], r[3]) for r in merged]
+    totals: dict[int, int] = {}
+    for cik, _f, _n in found:
+        totals[cik] = totals.get(cik, 0) + 1
+    best = max(totals, key=lambda c: totals[c])
+    if totals[best] >= 0.7 * len(found):
+        name = next(n for c, _f, n in found if c == best)
+        return [(best, found[0][1], name, totals[best])]
+    return None
+
+
+def candidates(symbol: str, aliases_back: dict[str, str]) -> list[tuple[str, str]]:
+    """Other tickers the same company may have filed under, with the rule that produced them."""
+    out: list[tuple[str, str]] = []
+    if symbol in aliases_back:
+        out.append((aliases_back[symbol], "alias"))  # BNY filed as BK before the change
+    plain = symbol.replace("-", "")
+    if plain != symbol:
+        out.append((plain, "class"))  # BF-B filed as BFB
+    if "-" in symbol:
+        out.append((symbol.split("-")[0] + "-A", "class"))
+    out += [(symbol + "A", "class"), (symbol[:-1], "class"), (symbol[:-1] + "A", "class")]
+    if symbol.endswith("Q") and len(symbol) >= 4:  # bankrupt: BTUUQ traded as BTU before
+        out += [(symbol[:-1], "bankrupt"), (symbol[:-2], "bankrupt")]
+    seen, unique = {symbol}, []
+    for cand, rule in out:
+        if cand and cand not in seen and len(cand) >= 2:
+            seen.add(cand)
+            unique.append((cand, rule))
+    return unique
+
+
 def choose(
     intervals: list[tuple[str, date, date | None]],
     filings: dict[str, list[tuple[int, date, str]]],
     overrides: dict[str, int],
     since: date,
+    aliases: dict[str, str] | None = None,
 ) -> tuple[list[list[Any]], dict[str, int]]:
+    aliases_back = {new: old for old, new in (aliases or {}).items()}
     rows: list[list[Any]] = []
-    stats = {"override": 0, "insider": 0, "ambiguous": 0, "unmapped": 0, "before_since": 0}
+    stats = {"override": 0, "insider": 0, "fallback": 0, "split": 0, "ambiguous": 0}
+    stats |= {"unmapped": 0, "before_since": 0}
     for symbol, start, end in intervals:
         if end is not None and end <= since:
             stats["before_since"] += 1
@@ -57,25 +123,29 @@ def choose(
             rows.append([symbol, start, end, overrides[symbol], None, "override", None])
             stats["override"] += 1
             continue
-        counts: dict[int, int] = {}
-        names: dict[int, str] = {}
-        for cik, filed, name in filings.get(symbol, []):
-            if filed >= start and (end is None or filed < end):
-                counts[cik] = counts.get(cik, 0) + 1
-                names[cik] = name
-        if not counts:
+        found = _in_interval(filings.get(symbol, []), start, end)
+        source = "insider"
+        if not found:
+            for cand, rule in candidates(symbol, aliases_back):
+                found = _in_interval(filings.get(cand, []), start, end)
+                if found:
+                    source = f"{rule}:{cand}"
+                    break
+        if not found:
             rows.append([symbol, start, end, None, None, "unmapped", 0])
             stats["unmapped"] += 1
             continue
-        ranked = sorted(counts.items(), key=lambda kv: -kv[1])
-        best, n = ranked[0]
-        if len(ranked) > 1 and ranked[1][1] >= 0.5 * n:
-            # two companies used the ticker inside one interval: needs a human
-            rows.append([symbol, start, end, None, names[best], "ambiguous", n])
+        segs = segments(found)
+        if segs is None:
+            rows.append([symbol, start, end, None, found[-1][2], "ambiguous", len(found)])
             stats["ambiguous"] += 1
             continue
-        rows.append([symbol, start, end, best, names[best], "insider", n])
-        stats["insider"] += 1
+        for k, (cik, first, name, n) in enumerate(segs):
+            seg_start = start if k == 0 else first
+            seg_end = segs[k + 1][1] if k + 1 < len(segs) else end
+            label = source if len(segs) == 1 else f"{source}+split"
+            rows.append([symbol, seg_start, seg_end, cik, name, label, n])
+        stats["split" if len(segs) > 1 else ("insider" if source == "insider" else "fallback")] += 1
     return rows, stats
 
 
@@ -116,24 +186,33 @@ def main(argv: list[str] | None = None) -> int:
     history = [
         tuple(r) for r in tables.read("meta", "sp500_history", "symbol, start_date, end_date")
     ]
-    rows, stats = choose(history, filings, overrides, args.since)  # type: ignore[arg-type]
+    aliases: dict[str, str] = {}
+    if args.aliases.exists():
+        raw_aliases = (yaml.safe_load(args.aliases.read_text()) or {}).get("aliases") or {}
+        aliases = {str(k): str(v) for k, v in raw_aliases.items()}
+    rows, stats = choose(history, filings, overrides, args.since, aliases)  # type: ignore[arg-type]
     # a renamed ticker (FB -> META) filed under its new symbol after the rename; nothing to do,
     # the interval of each symbol is matched against filings made under that same symbol.
     tables.write("meta", "ticker_cik", SCHEMA, [[r[k] for r in rows] for k in range(7)], "symbol")
-    unmapped = sorted({r[0] for r in rows if r[5] in ("unmapped", "ambiguous")})
+    unmapped = sorted({f"{r[0]}({r[5]})" for r in rows if r[5] in ("unmapped", "ambiguous")})
+    fallbacks = sorted({f"{r[0]}<-{r[5]}" for r in rows if ":" in str(r[5]) or "split" in r[5]})
     summary = {
-        "intervals_considered": len(rows),
+        "rows": len(rows),
         "by_source": stats,
-        "mapped_share": round(sum(1 for r in rows if r[3] is not None) / len(rows), 4)
-        if rows
-        else 0.0,
+        "mapped_share_of_intervals": round(
+            1
+            - (stats["unmapped"] + stats["ambiguous"])
+            / max(1, sum(v for k, v in stats.items() if k != "before_since")),
+            4,
+        ),
         "unmapped_or_ambiguous": unmapped,
+        "fallback_or_split": fallbacks,
     }
     text = json.dumps(summary, indent=2, ensure_ascii=False)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(text + "\n")
-    print(json.dumps({**summary, "unmapped_or_ambiguous": unmapped[:60]}, indent=2))
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0
 
 
