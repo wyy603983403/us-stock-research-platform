@@ -29,11 +29,13 @@ from typing import Any
 
 import httpx
 
+from us_stock_research.bars import DailyBar
 from us_stock_research.calendar import trading_days
 from us_stock_research.collectors.tiingo_intraday import RateLimited
 from us_stock_research.collectors.universe import to_yahoo
 from us_stock_research.collectors.yahoo_daily import USER_AGENT, fetch_symbol
 from us_stock_research.config import load_settings
+from us_stock_research.quality.ohlcv import audit_bars, load_exceptions
 from us_stock_research.storage import open_store
 from us_stock_research.tables import TableStore
 
@@ -227,6 +229,77 @@ def collect_delisted(
         results[symbol] = {"status": status, "source": source, "days": days}
         i += 1
     return {"results": results, "waits": waits, "stopped": stopped}
+
+
+def delisted_bars(rows: list[tuple[Any, ...]]) -> list[DailyBar]:
+    """``date, open, high, low, close, adj_close, volume, split_factor`` rows -> DailyBars.
+
+    Tiingo's close is fully unadjusted, Yahoo's is split-adjusted. Dividing by the product of
+    later split factors puts both on Yahoo's footing, so the quality gate's adjusted-vs-raw
+    check only flags dividends and spin-offs, not every split. (Yahoo-sourced rows carry
+    split_factor 1.0 and pass through unchanged.)
+    """
+    out: list[DailyBar] = []
+    factor = 1.0
+    for d, o, h, low, c, a, v, sf in sorted(rows, key=lambda r: r[0], reverse=True):
+        if min(o, h, low, c, a) > 0:
+            out.append(
+                DailyBar(d, o / factor, h / factor, low / factor, c / factor, a, int(v or 0))
+            )
+        if sf and sf > 0:
+            factor *= sf  # a split on day d scales every earlier price
+    return out[::-1]
+
+
+LOOKBACK_PAD = timedelta(days=450)  # signals look back ~13 months before membership starts
+
+
+def research_windows(history: list[tuple[Any, ...]]) -> dict[str, tuple[date, date]]:
+    """Per symbol: first membership start minus the signal lookback .. last membership end."""
+    out: dict[str, tuple[date, date]] = {}
+    for symbol, start, end in history:
+        lo = start - LOOKBACK_PAD
+        hi = end or date.today()  # after removal the series may end or the ticker be re-used
+        if symbol in out:
+            lo, hi = min(lo, out[symbol][0]), max(hi, out[symbol][1])
+        out[symbol] = (lo, hi)
+    return out
+
+
+def audit_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Quality gate for former-member daily prices.")
+    parser.add_argument("--output", type=Path, default=Path("artifacts/quality/delisted.json"))
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
+    args = parser.parse_args(argv)
+    tables = TableStore.from_settings(load_settings())
+    accepted, quarantine = load_exceptions(args.exceptions)
+    windows = research_windows(
+        tables.read("meta", "sp500_history", "symbol, start_date, end_date")
+        if tables.has("meta", "sp500_history")
+        else []
+    )
+    reports: list[dict[str, Any]] = []
+    for symbol in tables.keys(DELISTED_KIND):
+        rows = tables.read(
+            DELISTED_KIND,
+            symbol,
+            "date, open, high, low, close, adj_close, volume, split_factor",
+        )
+        bars = delisted_bars(rows)
+        if symbol in windows:  # only the stretch a backtest can touch
+            lo, hi = windows[symbol]
+            bars = [b for b in bars if lo <= b.day <= hi]
+        report = audit_bars(symbol, bars, accepted.get(symbol)).to_dict()
+        if symbol in quarantine:
+            report["quarantined"] = quarantine[symbol]
+            report["passed"] = False
+        reports.append(report)
+    failed = {r["symbol"]: r["errors"][:3] for r in reports if not r["passed"]}
+    out = {"checked": len(reports), "failed": len(failed), "reports": reports}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(out, indent=2, ensure_ascii=False, default=str) + "\n")
+    print(json.dumps({"checked": len(reports), "failed": failed}, indent=2, ensure_ascii=False))
+    return 0 if not failed else 1
 
 
 def main(argv: list[str] | None = None) -> int:

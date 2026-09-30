@@ -1073,3 +1073,34 @@ def test_ticker_aliases_borrow_successor_history() -> None:
     prices = xs.Prices([date(2020, 1, 2)], {"META": [1.0], "OLD": [2.0]})
     assert xs.apply_aliases(prices, {"FB": "META", "OLD": "META", "X": "NONE"}) == ["FB->META"]
     assert prices.series["FB"] is prices.series["META"] and prices.series["OLD"] == [2.0]
+
+
+def test_delisted_bars_split_adjust_tiingo_raw_prices() -> None:
+    from us_stock_research.collectors.sp500_history import delisted_bars
+
+    rows = [
+        (date(2020, 1, 2), 100.0, 101.0, 99.0, 100.0, 50.0, 10.0, 1.0),
+        (date(2020, 1, 3), 51.0, 52.0, 50.0, 51.0, 51.0, 10.0, 2.0),  # 2-for-1 ex-date
+        (date(2020, 1, 6), 52.0, 53.0, 51.0, 52.0, 52.0, 10.0, 1.0),
+    ]
+    bars = delisted_bars(rows)
+    assert [b.close for b in bars] == [50.0, 51.0, 52.0]
+    assert audit_bars("X", bars).passed
+
+
+def test_research_windows_cover_membership_plus_lookback() -> None:
+    from us_stock_research.collectors.sp500_history import research_windows
+
+    w = research_windows(
+        [("X", date(2010, 1, 4), date(2012, 1, 3)), ("X", date(2015, 1, 2), date(2016, 1, 4))]
+    )
+    assert w["X"][0] < date(2008, 11, 1) and w["X"][1] == date(2016, 1, 4)
+
+
+def test_reviewed_gap_can_be_accepted_by_first_date() -> None:
+    from us_stock_research.quality.ohlcv import QualityReport, _apply_reviewed
+
+    report = QualityReport(symbol="X", rows=1, first=None, last=None)
+    report.errors = ["17 NYSE trading days missing (2017-08-07 .. 2017-08-31)", "2020-01-02: x"]
+    out = _apply_reviewed(report, {"2017-08-07": "reviewed"})
+    assert out.errors == ["2020-01-02: x"] and "reviewed" in out.warnings[0]

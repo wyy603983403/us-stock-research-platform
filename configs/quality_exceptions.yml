@@ -27,11 +27,23 @@ accepted:
   ROK: [{date: "2001-07-02", reason: "分拆（Conexant），Tiingo 一致"}]
   TDG: [{date: "2009-10-14", reason: "特别分红，Tiingo 一致"}]
   WY: [{date: "2010-07-20", reason: "特别分红，Tiingo 一致"}]
+  # 2026-09-30 前成分股日线（daily_delisted，多为 Tiingo）复核：均为有据可查的分拆/特别分配，
+  # 复权价按分配价值加回，原始价大跌属预期。
+  CCEP: [{date: "2016-05-31", reason: "可口可乐欧洲合伙人成立，CCE 股东获现金+新股"}]
+  CTXS: [{date: "2017-02-01", reason: "分拆 GoTo 业务并入 LogMeIn"}]
+  DISCK: [{date: "2014-08-07", reason: "C 类股股票股利（相当于 1 拆 2）"}]
+  DLX: [{date: "2001-01-02", reason: "分拆 eFunds"}]
+  DWDP: [{date: "2017-08-07", reason: "合并前的零星预发行报价；2017-09-01 正式交易，信号不受影响"}]
+  DXC: [{date: "2015-11-30", reason: "CSC 分拆 CSRA"}]
+  FMC: [{date: "2002-01-02", reason: "分拆 FMC Technologies"}]
+  GGP: [{date: "2010-11-10", reason: "分拆 Howard Hughes"}]
+  GRA: [{date: "1998-04-01", reason: "Grace 包装业务与 Sealed Air 合并后分配"}]
 quarantine:
   DHR: "2016-07-05 雅虎复权涨幅 +61%（原始价 +3.6%），与 Tiingo 相差 58 个百分点：雅虎调整错误"
   ETN: "2001-01-02 雅虎与 Tiingo 相差 33 个百分点"
   HPQ: "2000-06-05 雅虎与 Tiingo 相差 24 个百分点（Agilent 分拆）"
   EXPE: "2011-12-21 雅虎与 Tiingo 相差 37 个百分点（TripAdvisor 分拆）"
+  AIV: "前成分股日线：2008-12-24 为已知特别分红，但 2020-11-03 复权 +12.7% / 原始 -16.1% 无法与公司事件对上（AIR 分拆在 2020-12），保守隔离"
   KDP: "2018-07-10 合并特别分红（约占股价 80%），雅虎与 Tiingo 复权收益相差 9.6 个百分点，超过 5 个百分点的接受线"
 # 下面这些日期两家数据源有分歧，但门禁没有报错（不影响接受/隔离结论），研究用到时留意：
 #   DPZ 2016-02-25/26（相差 13%）、MDLZ 2003-01-29/30（13%）、LDOS 2013-09-30（10.7%，单日）

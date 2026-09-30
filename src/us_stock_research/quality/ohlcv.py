@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -111,13 +112,18 @@ def audit_bars(
     return _apply_reviewed(report, accepted or {})
 
 
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def _apply_reviewed(report: QualityReport, accepted: dict[str, str]) -> QualityReport:
     """Errors on dates a human reviewed and accepted become warnings that carry the reason."""
     if not accepted:
         return report
     kept: list[str] = []
     for error in report.errors:
-        reason = accepted.get(error[:10])
+        # keyed by the first date: "2011-01-20: ..." or "17 days missing (2017-08-07 .."
+        found = ISO_DATE.search(error)
+        reason = accepted.get(found.group(0)) if found else None
         if reason:
             report.warnings.append(f"reviewed: {error} [{reason}]")
         else:
