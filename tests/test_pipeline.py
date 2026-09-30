@@ -947,3 +947,41 @@ def test_factor_attribution_recovers_loadings() -> None:
     assert out["r2"] > 0.95
     curve = monthly_returns(["2020-01-02", "2020-01-31", "2020-02-28", "2020-03-31"], [1, 2, 3, 6])
     assert curve == {(2020, 2): 0.5, (2020, 3): 1.0}
+
+
+def test_order_intent_rehearsal_reduce_only_and_breaker(data_dir: Path, tmp_path: Path) -> None:
+    import json as _json
+
+    from us_stock_research.storage import CsvStore
+    from us_stock_research.trading import order_intent as oi
+
+    c = contract()
+    store = CsvStore(data_dir)
+    as_of = date(2019, 6, 28)
+    clean = lambda s, b: []  # noqa: E731
+    cash = oi.Holdings(cash_usd=100_000.0)
+    intent = oi.generate(c, store, cash, as_of, quality=clean)
+    assert intent["mode"] == "rehearsal" and intent["trading_enabled"] is False
+    assert intent["signal_day"] == "2019-06-28" and not intent["reduce_only"]
+    assert abs(sum(intent["target_weights"].values()) - 1) < 1e-9
+    assert intent["orders"] and all(o["side"] == "BUY" for o in intent["orders"])
+    assert sum(o["est_value_usd"] for o in intent["orders"]) <= 100_000
+
+    held = oi.Holdings(cash_usd=0.0, positions={"QQQ": 500.0, "IEF": 10.0})
+    bad = oi.generate(c, store, held, as_of, quality=lambda s, b: ["bad"] if s == "IEF" else [])
+    assert bad["reduce_only"] and all(o["side"] == "SELL" for o in bad["orders"])
+
+    peak = oi.Holdings(cash_usd=10_000.0, peak_nav_usd=1_000_000.0)
+    tripped = oi.generate(c, store, peak, as_of, quality=clean)
+    assert any("circuit breaker" in r for r in tripped["reduce_only_reasons"])
+    assert tripped["orders"] == []
+
+    with pytest.raises(ValueError):
+        oi.generate(c, store, cash, date(2019, 6, 20), quality=clean)  # not month end
+
+    path = oi.write_outputs(intent, tmp_path / "orders")
+    assert _json.loads(path.read_text())["study"] == c.name
+    assert "人工复核" in path.with_suffix(".md").read_text()
+    oi.write_outputs(intent, tmp_path / "orders")
+    log = (tmp_path / "orders" / "audit_log.jsonl").read_text().splitlines()
+    assert len(log) == 2  # append-only

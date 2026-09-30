@@ -1,0 +1,7 @@
+# 持仓文件示例（复制为 portfolio/holdings.yml 后按实际填写；该目录不进 Git）
+as_of: 2026-09-30
+cash_usd: 20000
+positions:        # 标的: 股数
+  SPY: 100
+  IEF: 150
+peak_nav_usd: 110000   # 历史最高净值；跌破其 85% 时只允许卖出（熔断）

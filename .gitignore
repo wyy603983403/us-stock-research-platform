@@ -20,3 +20,5 @@ artifacts/*
 *.log
 .DS_Store
 logs/
+orders/
+portfolio/
