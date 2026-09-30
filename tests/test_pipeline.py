@@ -1132,3 +1132,47 @@ def test_equal_weight_reference_comparison() -> None:
         months.append({"date": days[t].isoformat(), "coverage": 1.0, "equal_weight": r})
     out = xs.compare_to_reference(months, prices, "RSP", 1, 0.9)
     assert out["months"] == len(months) - 1 and abs(out["mean_monthly_diff"]) < 1e-12
+
+
+def test_independent_cross_section_matches_engine() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import cross_section as xs
+    from us_stock_research.research import verify_xsec as vx
+
+    rng = random.Random(3)
+    days = trading_days(date(2018, 1, 2), date(2021, 6, 30))
+    series: dict[str, list[float | None]] = {}
+    for k in range(12):
+        p, out = 50.0 + k, []
+        stop = len(days) - 200 * (k % 3 == 0) if k % 4 == 0 else None
+        for i in range(len(days)):
+            p *= 1 + rng.gauss(0.0004 * (k - 5), 0.015)
+            gap = rng.random() < 0.01  # sprinkle missing days to exercise stale lookups
+            out.append(None if gap or (stop is not None and i >= stop) else p)
+        series[f"S{k}"] = out
+    prices = xs.Prices(days, series)
+    history = [(f"S{k}", date(2015, 1, 1), None) for k in range(10)]
+    history += [("S10", date(2020, 3, 2), None), ("S11", date(2015, 1, 1), date(2020, 1, 2))]
+    base = {
+        "name": "t",
+        "universe": {"start": date(2019, 3, 1), "end": date(2021, 5, 31), "min_history_days": 273},
+        "selection": {"top_n": 3},
+        "execution_lag_days": 1,
+        "transaction_cost_bps": 10,
+    }
+    as_dicts = {
+        s: {d: v for d, v in zip(days, vals, strict=True) if v is not None}
+        for s, vals in series.items()
+    }
+    for sig in (
+        {"name": "momentum_12_1", "lookback_days": 252, "skip_days": 21},
+        {"name": "low_volatility", "lookback_days": 252},
+    ):
+        c = dict(base, signal=sig)
+        for cut in (0.0, -0.3):
+            a = xs.run(c, prices, history, haircut=cut, excluded={"S5"})["months"]
+            b = vx.backtest(c, as_dicts, history, haircut=cut, excluded={"S5"})
+            result = vx.compare(a, b)
+            assert result["match"], (sig["name"], cut, result)
