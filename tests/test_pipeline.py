@@ -923,3 +923,27 @@ def test_intraday_market_bad_days_and_exceptions() -> None:
     assert date(2024, 12, 23) in bad and start == date(2024, 7, 8)
     kept = qi.regular_session(_minute_rows(date(2024, 12, 23), 1.0, 5), exclude=bad)
     assert kept == []
+
+
+def test_factor_attribution_recovers_loadings() -> None:
+    import random
+
+    from us_stock_research.research.attribution import FACTORS, attribute, monthly_returns
+
+    rng = random.Random(7)
+    factors: dict[tuple[int, int], dict[str, float]] = {}
+    returns: dict[tuple[int, int], float] = {}
+    for i in range(240):
+        m = (2000 + i // 12, i % 12 + 1)
+        f = {name: rng.gauss(0.005, 0.04) for name in FACTORS}
+        f["rf"] = 0.002
+        factors[m] = f
+        returns[m] = 0.002 + 0.001 + 0.5 * f["mkt_rf"] + 0.3 * f["mom"] + rng.gauss(0, 0.002)
+    out = attribute(returns, factors)
+    assert abs(out["loadings"]["mkt_rf"] - 0.5) < 0.02
+    assert abs(out["loadings"]["mom"] - 0.3) < 0.02
+    assert abs(out["loadings"]["hml"]) < 0.02
+    assert abs(out["alpha_annual"] - 0.012) < 0.004 and out["alpha_t"] > 3
+    assert out["r2"] > 0.95
+    curve = monthly_returns(["2020-01-02", "2020-01-31", "2020-02-28", "2020-03-31"], [1, 2, 3, 6])
+    assert curve == {(2020, 2): 0.5, (2020, 3): 1.0}
