@@ -46,7 +46,8 @@ def contract(**overrides: Any) -> StudyContract:
 
 def test_repo_contracts_and_risk_config_are_valid() -> None:
     for path in (ROOT / "research").glob("*/study.yml"):
-        load_contract(path)
+        if "kind: cross_section" not in path.read_text():  # validated by the xs engine test
+            load_contract(path)
     risk = load_risk(ROOT / "configs/risk/default.yml")
     assert risk.trading_enabled is False
     assert risk.max_worst_12m_loss <= 0.25
@@ -985,3 +986,80 @@ def test_order_intent_rehearsal_reduce_only_and_breaker(data_dir: Path, tmp_path
     oi.write_outputs(intent, tmp_path / "orders")
     log = (tmp_path / "orders" / "audit_log.jsonl").read_text().splitlines()
     assert len(log) == 2  # append-only
+
+
+def test_cross_section_point_in_time_engine() -> None:
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import cross_section as xs
+
+    days = trading_days(date(2018, 6, 1), date(2021, 3, 31))
+    n = len(days)
+
+    def path(daily: float, stop: int | None = None) -> list[float | None]:
+        out: list[float | None] = []
+        p = 100.0
+        for i in range(n):
+            p *= 1 + daily
+            out.append(None if stop is not None and i >= stop else p)
+        return out
+
+    cut = days.index(date(2020, 6, 15))
+    prices = xs.Prices(
+        days,
+        {
+            "WIN": path(0.002),  # strongest momentum
+            "MID": path(0.001),
+            "LOSE": path(-0.001),
+            "GONE": path(0.003, stop=cut),  # best momentum, then delisted mid-month
+            "LATE": path(0.004),  # strongest, but only joins the index in 2021
+            "SPY": path(0.001),
+        },
+    )
+    history = [
+        ("WIN", date(2000, 1, 1), None),
+        ("MID", date(2000, 1, 1), None),
+        ("LOSE", date(2000, 1, 1), None),
+        ("GONE", date(2000, 1, 1), date(2020, 7, 1)),
+        ("LATE", date(2021, 1, 15), None),
+    ]
+    contract = {
+        "name": "t",
+        "universe": {"start": date(2020, 1, 1), "end": date(2021, 3, 31), "min_history_days": 273},
+        "signal": {"name": "momentum_12_1", "lookback_days": 252, "skip_days": 21},
+        "selection": {"top_n": 2},
+        "execution_lag_days": 1,
+        "transaction_cost_bps": 10,
+    }
+    out = xs.run(contract, prices, history, haircut=-0.3)
+    months = {m["date"][:7]: m for m in out["months"]}
+    assert months["2020-01"]["top"] == ["GONE", "WIN"]
+    assert months["2020-05"]["early_exits"] == 1  # GONE ends inside June's holding period
+    assert "GONE" not in months["2020-07"]["top"] and months["2020-07"]["members"] == 3
+    assert "LATE" not in months["2020-12"]["top"]  # not a member yet: no look-ahead
+    assert months["2021-01"]["members"] == 4 and months["2021-01"]["coverage"] == 1.0
+    assert months["2020-01"]["turnover_one_way"] == 0.5  # from cash: half of |dw| = 1
+    i = days.index(date(2020, 1, 31)) + 1
+    j = days.index(date(2020, 2, 28)) + 1
+    r = [xs.holding_return(prices, s, i, j, -0.3)[0] for s in ("GONE", "WIN")]
+    assert abs(months["2020-01"]["strategy"] - (sum(r) / 2 - 0.001)) < 1e-12
+    # May's holding period contains GONE's delisting: sold at the last close, then a 30% haircut
+    assert months["2020-05"]["strategy"] < months["2020-04"]["strategy"] - 0.1
+    low = dict(contract, signal={"name": "low_volatility", "lookback_days": 252})
+    assert xs.run(low, prices, history)["months"][0]["picks"] == 2
+    summary = xs.summarize(
+        dict(
+            contract,
+            inference={
+                "resamples": 200,
+                "block_size_months": 3,
+                "confidence_level": 0.9,
+                "random_seed": 1,
+            },
+        ),
+        out,
+    )
+    assert summary["strategy"]["months"] == len(out["months"])
+    assert summary["coverage_min"] == months["2020-06"]["coverage"] == 0.75  # GONE unpriced
+    for path_ in (ROOT / "research").glob("*/study.yml"):
+        if "kind: cross_section" in path_.read_text():
+            assert xs.load_xs_contract(path_)["selection"]["top_n"] in (50, 100)

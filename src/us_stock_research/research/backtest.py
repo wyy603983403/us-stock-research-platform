@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -24,6 +23,7 @@ from typing import Any
 from us_stock_research.config import load_settings
 from us_stock_research.research.contracts import StudyContract, load_contract
 from us_stock_research.research.snapshots import Bundle, load_snapshot
+from us_stock_research.research.stats import block_bootstrap
 from us_stock_research.research.trials import record_and_assess
 
 TRADING_DAYS = 252
@@ -263,33 +263,6 @@ def monthly_returns(curve: list[float], days: list[date]) -> list[float]:
     ends.append(len(days) - 1)
     points = [0, *ends]
     return [curve[b] / curve[a] - 1 for a, b in zip(points, points[1:], strict=False) if b > a]
-
-
-def block_bootstrap(
-    excess: list[float], resamples: int, block: int, level: float, seed: int
-) -> dict[str, Any]:
-    n = len(excess)
-    if n < block * 2:
-        return {"method": "moving_block_bootstrap_mean_excess_v1", "error": "too few months"}
-    rng = random.Random(seed)
-    means: list[float] = []
-    for _ in range(resamples):
-        sample: list[float] = []
-        while len(sample) < n:
-            s = rng.randrange(0, n - block + 1)
-            sample.extend(excess[s : s + block])
-        means.append(sum(sample[:n]) / n)
-    means.sort()
-    lo = means[int((1 - level) / 2 * resamples)]
-    hi = means[min(int((1 + level) / 2 * resamples), resamples - 1)]
-    return {
-        "method": "moving_block_bootstrap_mean_excess_v1",
-        "months": n,
-        "mean_monthly_excess": sum(excess) / n,
-        "interval": [lo, hi],
-        "confidence_level": level,
-        "probability_positive": sum(m > 0 for m in means) / resamples,
-    }
 
 
 def walk_forward_windows(curve: list[float], days: list[date], months: int) -> list[dict[str, Any]]:
