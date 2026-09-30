@@ -51,7 +51,7 @@ class TableStore:
         target = self.path(kind, key)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(".parquet.tmp")
-        ddl = ", ".join(f"{n} {t}" for n, t in schema.items())
+        ddl = ", ".join(f'"{n}" {t}' for n, t in schema.items())  # quoted: reserved words ok
         con = self._duckdb().connect()
         try:
             con.execute(f"CREATE TABLE t({ddl})")

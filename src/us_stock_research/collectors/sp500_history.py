@@ -2,8 +2,8 @@
 
 Membership comes from github.com/fja05680/sp500 ("S&P 500 Historical Components & Changes
 (Updated).csv": one row per change date with the full ticker list). It is stored as intervals in
-``parquet/meta/sp500_history.parquet`` (``symbol, start, end``; ``end`` is the first date the
-ticker was no longer listed, null while it is a member). Tickers are converted to Yahoo notation.
+``parquet/meta/sp500_history.parquet`` (``symbol, start_date, end_date``; ``end_date`` is the first
+date the ticker was no longer listed, null while it is a member). Tickers use Yahoo notation.
 
 Former members are mostly delisted, so Yahoo has no history for them. ``--delisted`` tries Yahoo
 (for those still trading) and then Tiingo's daily endpoint, storing into
@@ -54,11 +54,11 @@ DELISTED_SCHEMA = {
     "div_cash": "DOUBLE",
     "split_factor": "DOUBLE",
 }
-HISTORY_SCHEMA = {"symbol": "VARCHAR", "start": "DATE", "end": "DATE"}
+HISTORY_SCHEMA = {"symbol": "VARCHAR", "start_date": "DATE", "end_date": "DATE"}
 COVERAGE_SCHEMA = {
     "symbol": "VARCHAR",
-    "start": "DATE",
-    "end": "DATE",
+    "start_date": "DATE",
+    "end_date": "DATE",
     "source": "VARCHAR",
     "coverage": "DOUBLE",
     "status": "VARCHAR",
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             "sp500_history",
             HISTORY_SCHEMA,
             [[h[0] for h in history], [h[1] for h in history], [h[2] for h in history]],
-            "symbol, start",
+            "symbol, start_date",
         )
     relevant = [h for h in history if h[2] is None or h[2] > args.since]
     have = set(daily.symbols())
@@ -339,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
             "sp500_coverage",
             COVERAGE_SCHEMA,
             [[r[k] for r in coverage_rows] for k in range(len(COVERAGE_SCHEMA))],
-            "symbol, start",
+            "symbol, start_date",
         )
     usable = sum(1 for r in coverage_rows if r[5] in ("ok", "stored"))
     summary["usable_intervals"] = f"{usable}/{len(coverage_rows)}"
