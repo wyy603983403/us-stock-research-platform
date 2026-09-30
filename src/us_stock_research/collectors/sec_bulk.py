@@ -3,7 +3,9 @@
 Both include companies that have since been delisted or acquired, which is what a
 survivorship-free fundamental study needs.
 
-* **Financial Statement Data Sets** (``<YYYY>q<N>.zip``: ``sub.txt`` + ``num.txt``). Only the
+* **Financial Statement Data Sets** (``<YYYY>q<N>.zip``: ``sub.txt`` + ``num.txt``). Since SEC's
+  December 2024 reprocessing they hold only the primary statements, so cover-page share counts are
+  gone; use ``WeightedAverageNumberOfDilutedSharesOutstanding`` for market value. Only the
   consolidated (no segment, no co-registrant), standard-taxonomy values of ``TAGS`` are kept,
   joined with the filing facts (CIK, name, SIC industry, form, period, filing date). Stored as
   ``parquet/sec_fsds/<YYYY>q<N>.parquet``. ``filed`` is when the market could first know a
@@ -46,20 +48,31 @@ INSIDER_URLS = (
 FSDS_KIND, INSIDER_KIND = "sec_fsds", "sec_insider"
 FORMS = {"10-K", "10-K/A", "10-Q", "10-Q/A", "10-KT", "10-KT/A"}
 TAGS = {
-    # income statement
+    # income statement (alternatives cover banks, insurers and companies without a COGS line)
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
     "SalesRevenueNet",
+    "RevenuesNetOfInterestExpense",
+    "InterestAndDividendIncomeOperating",
     "CostOfRevenue",
     "CostOfGoodsAndServicesSold",
+    "CostOfGoodsSold",
     "GrossProfit",
-    "OperatingIncomeLoss",
+    "SellingGeneralAndAdministrativeExpense",
     "ResearchAndDevelopmentExpense",
+    "OperatingIncomeLoss",
     "InterestExpense",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
     "IncomeTaxExpenseBenefit",
     "NetIncomeLoss",
+    "ProfitLoss",
+    "NetIncomeLossAvailableToCommonStockholdersBasic",
+    "EarningsPerShareBasic",
     "EarningsPerShareDiluted",
+    "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
+    "CommonStockDividendsPerShareDeclared",
     # balance sheet
     "Assets",
     "AssetsCurrent",
@@ -67,18 +80,32 @@ TAGS = {
     "LiabilitiesCurrent",
     "LiabilitiesAndStockholdersEquity",
     "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
     "RetainedEarningsAccumulatedDeficit",
     "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    "AccountsReceivableNetCurrent",
+    "InventoryNet",
+    "PropertyPlantAndEquipmentNet",
+    "Goodwill",
     "LongTermDebt",
     "LongTermDebtNoncurrent",
+    "LongTermDebtCurrent",
+    "DebtCurrent",
     "CommonStockSharesOutstanding",
+    "CommonStockSharesIssued",
+    "TreasuryStockShares",
     # cash flow
     "NetCashProvidedByUsedInOperatingActivities",
     "PaymentsToAcquirePropertyPlantAndEquipment",
     "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization",
+    "ShareBasedCompensation",
     "PaymentsOfDividends",
+    "PaymentsOfDividendsCommonStock",
     "PaymentsForRepurchaseOfCommonStock",
-    # cover page (dei): shares outstanding for market value
+    "ProceedsFromIssuanceOfCommonStock",
+    # cover page (dei): dropped by SEC's Dec-2024 reprocessing of the data sets, kept in case
     "EntityCommonStockSharesOutstanding",
 }
 FSDS_SCHEMA = {
