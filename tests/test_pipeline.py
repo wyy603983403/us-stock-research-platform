@@ -1285,7 +1285,17 @@ def test_cik_map_picks_the_company_using_the_ticker_during_membership() -> None:
         ("FOX", date(2019, 3, 1), None),
         ("BNY", date(2024, 12, 1), None),
     ]
-    rows, stats = choose(intervals, filings, {"NONE": 42}, date(2009, 1, 1), {"BK": "BNY"})
+    filings["SATS"] = [(6006, date(2026, 6, 1), "ECHOSTAR")]
+    filings["ECHO"] = [(7007, date(2021, 11, 1), "ECHO GLOBAL LOGISTICS")] * 5
+    intervals += [("ECHO", date(2026, 6, 24), None), ("FRC", date(2019, 1, 2), date(2023, 5, 4))]
+    rows, stats = choose(
+        intervals,
+        filings,
+        {"NONE": 42, "FRC": None, "DXC@1996-01-02": 23082},
+        date(2009, 1, 1),
+        {"BK": "BNY", "SATS": "ECHO"},
+        data_end=date(2026, 6, 18),
+    )
     got = {(r[0], r[1]): (r[3], r[5]) for r in rows}
     assert got[("AAL", date(2015, 3, 23))] == (6201, "insider")
     assert got[("Q", date(2000, 7, 6))] == (68622, "insider")
@@ -1297,4 +1307,6 @@ def test_cik_map_picks_the_company_using_the_ticker_during_membership() -> None:
     assert got[("BTUUQ", date(2010, 1, 1))] == (3003, "bankrupt:BTU")
     assert got[("FOX", date(2019, 3, 1))] == (4004, "class:FOXA")
     assert got[("BNY", date(2024, 12, 1))] == (5005, "alias:BK")
+    assert got[("ECHO", date(2026, 6, 24))] == (6006, "recent-alias:SATS")  # not the old ECHO
+    assert got[("FRC", date(2019, 1, 2))] == (None, "override:no_sec_filer")
     assert stats["before_since"] == 1

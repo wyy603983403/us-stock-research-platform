@@ -1,0 +1,17 @@
+# 历史代码 → SEC 编号的人工复核结果（优先于自动匹配）。
+# 键：代码，或“代码@成分期开始日”只作用于那一段；值：CIK，或 none（确认不在 SEC 申报）。
+# 2026-09-30 依据内部人交易数据里当年代码下的申报公司名称逐条核对。
+DXC@1996-01-02: 23082      # 该段为 Computer Sciences（代码 CSC），自动规则误配为 Dynex (DX)
+HSH@1996-01-02: 23666      # 该段为 Sara Lee（SLE），误配为 HealthSpring (HS)
+SUNEQ@2007-05-31: 945436   # 该段为 MEMC Electronic Materials（WFR，后更名 SunEdison），误配为 Sunoco
+VIAV@2000-07-27: 912093    # 该段为 JDS Uniphase（JDSU），误配为 Viacom (VIA)
+FRC: none                  # First Republic 银行向 FDIC 而非 SEC 申报
+DLR: 1297996               # Digital Realty Trust, Inc.（另有经营合伙企业 L.P. 同代码申报）
+KDP: 1418135               # Dr Pepper Snapple → Keurig Dr Pepper，同一编号
+TMUS: 1283699              # MetroPCS → T-Mobile US，同一编号
+LDOS: 1336920              # SAIC → Leidos，同一编号
+LSI: 703360                # LSI Corp
+ATGE: 730464               # DeVry → Adtalem，同一编号
+AABA: 1011006              # Yahoo → Altaba，同一编号
+EKDKQ: 31235               # Eastman Kodak
+MTLQQ: 40730               # 旧通用汽车（General Motors Corp，2009 年破产）

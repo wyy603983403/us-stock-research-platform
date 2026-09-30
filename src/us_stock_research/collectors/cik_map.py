@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +93,11 @@ def candidates(symbol: str, aliases_back: dict[str, str]) -> list[tuple[str, str
         out.append((plain, "class"))  # BF-B filed as BFB
     if "-" in symbol:
         out.append((symbol.split("-")[0] + "-A", "class"))
-    out += [(symbol + "A", "class"), (symbol[:-1], "class"), (symbol[:-1] + "A", "class")]
+    out.append((symbol + "A", "class"))  # FOX filed as FOXA
+    if symbol.endswith("A") and len(symbol) >= 4:
+        out.append((symbol[:-1], "class"))  # NWSA filed as NWS
+    if symbol.endswith("K") and len(symbol) >= 4:
+        out.append((symbol[:-1] + "A", "class"))  # CMCSK filed as CMCSA
     if symbol.endswith("Q") and len(symbol) >= 4:  # bankrupt: BTUUQ traded as BTU before
         out += [(symbol[:-1], "bankrupt"), (symbol[:-2], "bankrupt")]
     seen, unique = {symbol}, []
@@ -107,9 +111,10 @@ def candidates(symbol: str, aliases_back: dict[str, str]) -> list[tuple[str, str
 def choose(
     intervals: list[tuple[str, date, date | None]],
     filings: dict[str, list[tuple[int, date, str]]],
-    overrides: dict[str, int],
+    overrides: dict[str, int | None],
     since: date,
     aliases: dict[str, str] | None = None,
+    data_end: date | None = None,
 ) -> tuple[list[list[Any]], dict[str, int]]:
     aliases_back = {new: old for old, new in (aliases or {}).items()}
     rows: list[list[Any]] = []
@@ -119,8 +124,11 @@ def choose(
         if end is not None and end <= since:
             stats["before_since"] += 1
             continue
-        if symbol in overrides:
-            rows.append([symbol, start, end, overrides[symbol], None, "override", None])
+        key = f"{symbol}@{start.isoformat()}"
+        if key in overrides or symbol in overrides:
+            cik = overrides.get(key, overrides.get(symbol))
+            label = "override" if cik is not None else "override:no_sec_filer"
+            rows.append([symbol, start, end, cik, None, label, None])
             stats["override"] += 1
             continue
         found = _in_interval(filings.get(symbol, []), start, end)
@@ -129,6 +137,19 @@ def choose(
             for cand, rule in candidates(symbol, aliases_back):
                 found = _in_interval(filings.get(cand, []), start, end)
                 if found:
+                    source = f"{rule}:{cand}"
+                    break
+        if not found and data_end is not None and start > data_end:
+            # membership began after the last filing in the data: take whoever filed most
+            # recently under the old ticker (renames) or this ticker, if within a year
+            order = [(symbol, "recent")]
+            if symbol in aliases_back:
+                order.insert(0, (aliases_back[symbol], "recent-alias"))
+            for cand, rule in order:
+                recent = [f for f in filings.get(cand, []) if f[1] >= start - timedelta(days=365)]
+                if recent:
+                    last = max(recent, key=lambda f: f[1])
+                    found = [last]
                     source = f"{rule}:{cand}"
                     break
         if not found:
@@ -178,11 +199,10 @@ def main(argv: list[str] | None = None) -> int:
         for part in str(sym).replace(";", ",").split(","):  # some filings list several classes
             if part.strip():
                 filings.setdefault(yahoo(part), []).append((int(cik), filed, name))
-    overrides: dict[str, int] = {}
+    overrides: dict[str, int | None] = {}
     if args.overrides.exists():
-        overrides = {
-            str(k): int(v) for k, v in (yaml.safe_load(args.overrides.read_text()) or {}).items()
-        }
+        for k, v in (yaml.safe_load(args.overrides.read_text()) or {}).items():
+            overrides[str(k)] = None if str(v).lower() == "none" else int(v)
     history = [
         tuple(r) for r in tables.read("meta", "sp500_history", "symbol, start_date, end_date")
     ]
@@ -190,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.aliases.exists():
         raw_aliases = (yaml.safe_load(args.aliases.read_text()) or {}).get("aliases") or {}
         aliases = {str(k): str(v) for k, v in raw_aliases.items()}
-    rows, stats = choose(history, filings, overrides, args.since, aliases)  # type: ignore[arg-type]
+    data_end = max(f[1] for fl in filings.values() for f in fl)
+    rows, stats = choose(history, filings, overrides, args.since, aliases, data_end)  # type: ignore[arg-type]
     # a renamed ticker (FB -> META) filed under its new symbol after the rename; nothing to do,
     # the interval of each symbol is matched against filings made under that same symbol.
     tables.write("meta", "ticker_cik", SCHEMA, [[r[k] for r in rows] for k in range(7)], "symbol")
