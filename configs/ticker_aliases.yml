@@ -1,0 +1,29 @@
+# 旧代码 -> 新代码：同一家公司改了代码，雅虎只在新代码下保存全部历史。
+# 回测时旧代码的成分期使用新代码的价格。只收录能确认是同一法律实体延续的；
+# 并购后由收购方沿用（如 WRK→SW）、或无法确认的，一律不收录。
+# 由 2026-09-30 的“同日一出一进”候选清单人工核对得出；标“推断”的依据是同日一换一且新代码价格历史早于换码日多年。
+aliases:
+  HRS: LHX      # 2019 Harris 并入 L3 后更名 L3Harris（Harris 为存续主体）
+  TMK: GL       # 2019 Torchmark 更名 Globe Life
+  BHGE: BKR     # 2019 Baker Hughes, a GE company 更名 Baker Hughes
+  JEC: J        # 2019 Jacobs Engineering 改代码
+  UTX: RTX      # 2020 United Technologies 更名 Raytheon Technologies
+  MYL: VTRS     # 2020 Mylan 与 Upjohn 合并为 Viatris（Mylan 为存续主体）
+  LB: BBWI      # 2021 L Brands 分拆后更名 Bath & Body Works
+  COG: CTRA     # 2021 Cabot Oil & Gas 并购 Cimarex 后更名 Coterra
+  WLTW: WTW     # 2022 Willis Towers Watson 改代码
+  DISCA: WBD    # 2022 Discovery 并入华纳后更名 Warner Bros. Discovery（Discovery 为存续主体）
+  BLL: BALL     # 2022 Ball Corp 改代码
+  FB: META      # 2022 Facebook 更名 Meta
+  ANTM: ELV     # 2022 Anthem 更名 Elevance Health
+  NLOK: GEN     # 2022 NortonLifeLock 更名 Gen Digital
+  PKI: RVTY     # 2023 PerkinElmer 更名 Revvity
+  RE: EG        # 2023 Everest Re 更名 Everest Group
+  ABC: COR      # 2023 AmerisourceBergen 更名 Cencora
+  CDAY: DAY     # 2024 Ceridian 更名 Dayforce
+  PEAK: DOC     # 2024 Healthpeak 改代码为 DOC
+  CBS: PSKY     # CBS→ViacomCBS→Paramount→Paramount Skydance，CBS Corp 为存续主体
+  PARA: PSKY    # 2025 Paramount Global 并入 Skydance 后改代码
+  MMC: MRSH     # 2026 Marsh & McLennan 改代码（推断）
+  BK: BNY       # 2026 Bank of New York Mellon 改代码（推断）
+  SATS: ECHO    # 2026 EchoStar 改代码（推断）

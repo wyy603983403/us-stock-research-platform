@@ -272,6 +272,23 @@ def data_fingerprint(tables: TableStore, kinds: list[str]) -> str:
     return "xsec-data-v1:sha256:" + digest.hexdigest()
 
 
+def load_aliases(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text()) or {}
+    return {str(k): str(v) for k, v in (raw.get("aliases") or {}).items()}
+
+
+def apply_aliases(prices: Prices, aliases: dict[str, str]) -> list[str]:
+    """Renamed tickers borrow the new ticker's history (same company); returns those applied."""
+    applied = []
+    for old, new in sorted(aliases.items()):
+        if old not in prices.series and new in prices.series:
+            prices.series[old] = prices.series[new]
+            applied.append(f"{old}->{new}")
+    return applied
+
+
 def load_prices(tables: TableStore, start: date, end: date) -> Prices:
     days = trading_days(start, end)
     index = {d: i for i, d in enumerate(days)}
@@ -331,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--registry", type=Path, default=Path("research/trials.jsonl"))
     parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
+    parser.add_argument("--aliases", type=Path, default=Path("configs/ticker_aliases.yml"))
     args = parser.parse_args(argv)
     contract = load_xs_contract(args.contract)
     tables = TableStore.from_settings(load_settings())
@@ -342,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
     prices = load_prices(
         tables, uni["start"] - timedelta(days=500), uni["end"] + timedelta(days=45)
     )
+    aliases_applied = apply_aliases(prices, load_aliases(args.aliases))
     quarantined = set(load_exceptions(args.exceptions)[1])
     base = run(contract, prices, history, excluded=quarantined)
     haircut = float(contract.get("delisting", {}).get("haircut_sensitivity", 0.0))
@@ -361,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         "git_sha": _git_sha(),
         "trading_enabled": False,
         "excluded_quarantined": sorted(quarantined),
+        "ticker_aliases_applied": aliases_applied,
         "summary": summary,
         "haircut_sensitivity": {"haircut": haircut, "summary": summarize(contract, stressed)},
         "strategy_monthly_returns": [m["strategy"] for m in base["months"]],

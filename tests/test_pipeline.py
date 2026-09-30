@@ -1063,3 +1063,13 @@ def test_cross_section_point_in_time_engine() -> None:
     for path_ in (ROOT / "research").glob("*/study.yml"):
         if "kind: cross_section" in path_.read_text():
             assert xs.load_xs_contract(path_)["selection"]["top_n"] in (50, 100)
+
+
+def test_ticker_aliases_borrow_successor_history() -> None:
+    from us_stock_research.research import cross_section as xs
+
+    aliases = xs.load_aliases(ROOT / "configs/ticker_aliases.yml")
+    assert aliases["FB"] == "META" and "WRK" not in aliases
+    prices = xs.Prices([date(2020, 1, 2)], {"META": [1.0], "OLD": [2.0]})
+    assert xs.apply_aliases(prices, {"FB": "META", "OLD": "META", "X": "NONE"}) == ["FB->META"]
+    assert prices.series["FB"] is prices.series["META"] and prices.series["OLD"] == [2.0]
