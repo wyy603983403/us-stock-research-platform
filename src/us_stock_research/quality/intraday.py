@@ -28,6 +28,8 @@ from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import yaml
+
 from us_stock_research.calendar import is_trading_day, nyse_holidays, trading_days
 from us_stock_research.storage import add_store_args, open_store, settings_from_args
 from us_stock_research.tables import TableStore
@@ -71,11 +73,30 @@ def session_minutes(day: date) -> int:
     return int((stop - start).total_seconds() // 60)
 
 
-def regular_session(rows: Iterable[Row]) -> list[Row]:
-    """Keep only bars inside the regular session of a trading day (for research use)."""
+def load_intraday_exceptions(
+    path: Path, source: str, symbol: str | None = None
+) -> tuple[set[date], date | None]:
+    """Known-bad days for a source and, if given, the first valid day of ``symbol``."""
+    if not path.exists():
+        return set(), None
+    raw = (yaml.safe_load(path.read_text()) or {}).get(source) or {}
+    bad = {date.fromisoformat(str(d)) for d in raw.get("bad_days") or []}
+    start = (raw.get("symbol_start") or {}).get(symbol) if symbol else None
+    return bad, date.fromisoformat(str(start)) if start else None
+
+
+def regular_session(
+    rows: Iterable[Row], exclude: set[date] | None = None, since: date | None = None
+) -> list[Row]:
+    """Keep only bars inside the regular session of a trading day (for research use).
+
+    ``exclude``/``since`` come from ``load_intraday_exceptions`` (vendor outages, re-used tickers).
+    """
     out: list[Row] = []
     for row in rows:
         day = row[0].date()
+        if (exclude and day in exclude) or (since and day < since):
+            continue
         if is_trading_day(day):
             start, stop = session_utc(day)
             if start <= row[0] < stop:
@@ -122,6 +143,13 @@ def audit_intraday(
     if not days:
         return {**result, "days": 0, "passed": False, "reasons": ["no regular-session bars"]}
     expected = trading_days(days[0], days[-1])
+    # Data stops an hour or more before the close: fine for a thin name, but when many symbols
+    # share the same truncated day it is a vendor outage (see market_bad_days in main()).
+    truncated = [
+        d
+        for d in days
+        if is_trading_day(d) and session_utc(d)[1] - per_day[d]["last"] > timedelta(minutes=60)
+    ]
     missing = sorted(set(expected) - set(days))
     extra = [d for d in days if not is_trading_day(d)]
     coverage = [per_day[d]["n"] / session_minutes(d) for d in days if is_trading_day(d)]
@@ -170,11 +198,13 @@ def audit_intraday(
         "days": len(days),
         "missing_days": len(missing),
         "missing_sample": [d.isoformat() for d in missing[:10]],
+        "missing_all": [d.isoformat() for d in missing],
         "extra_days": [d.isoformat() for d in extra[:10]],
         "early_close_days": sum(1 for d in days if early_close(d)),
         "mean_coverage": round(sum(coverage) / len(coverage), 4) if coverage else 0.0,
         "median_coverage": round(median(coverage), 4) if coverage else 0.0,
         "low_coverage_days": sum(1 for x in coverage if x < 0.5),
+        "truncated_days": [d.isoformat() for d in truncated],
         "ohlc_error_bars": bad_bars,
         "ohlc_error_sample": ohlc_errors,
         "close_compared_days": compared,
@@ -235,6 +265,24 @@ def compare_sources(a: list[Row], b: list[Row], tolerance: float = 0.002) -> dic
     }
 
 
+def market_bad_days(audits: dict[str, Any], share: float = 0.2) -> dict[str, str]:
+    """Days on which more than ``share`` of the symbols trading then are missing or truncated."""
+    live: dict[str, int] = {}
+    hit: dict[str, int] = {}
+    for a in audits.values():
+        if not a.get("days"):
+            continue
+        for d in trading_days(date.fromisoformat(a["first"]), date.fromisoformat(a["last"])):
+            live[d.isoformat()] = live.get(d.isoformat(), 0) + 1
+        for d in set(a.get("missing_all", [])) | set(a.get("truncated_days", [])):
+            hit[d] = hit.get(d, 0) + 1
+    return {
+        d: f"{n}/{live[d]}"
+        for d, n in sorted(hit.items())
+        if live.get(d) and n / live[d] > share and live[d] >= 5
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audit stored 1-minute bars.")
     parser.add_argument("symbols", nargs="*")
@@ -274,8 +322,10 @@ def main(argv: list[str] | None = None) -> int:
             if tables.has(other, symbol):
                 checks[symbol] = compare_sources(rows, tables.read(other, symbol, COLUMNS))
     failed = sorted(s for s, a in audits.items() if not a["passed"])
+    bad_days = market_bad_days(audits)
     report = {
         "source": args.source,
+        "market_bad_days": bad_days,
         "symbols": len(audits),
         "passed": len(audits) - len(failed),
         "failed": {s: audits[s]["reasons"] for s in failed},
@@ -287,7 +337,10 @@ def main(argv: list[str] | None = None) -> int:
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     if len(audits) <= 5:
         print(json.dumps({"audits": audits, "crosscheck": checks}, indent=2, ensure_ascii=False))
-    brief = {k: report[k] for k in ("source", "symbols", "passed", "failed", "crosscheck_failed")}
+    brief = {
+        k: report[k]
+        for k in ("source", "symbols", "passed", "failed", "crosscheck_failed", "market_bad_days")
+    }
     brief["report"] = str(args.output)
     print(json.dumps(brief, indent=2, ensure_ascii=False))
     return 0 if not failed and not report["crosscheck_failed"] else 1

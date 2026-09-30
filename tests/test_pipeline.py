@@ -901,3 +901,25 @@ def test_former_member_download_validates_window_and_waits_on_quota() -> None:
     assert res["REUSED"]["status"] == "rejected_window" and "REUSED" not in store.data
     assert out["waits"] == 1 and 61 * 60 in waits
     assert sorted(store.data) == ["GONE", "LIVE"]
+
+
+def test_intraday_market_bad_days_and_exceptions() -> None:
+    from us_stock_research.quality import intraday as qi
+
+    days = [date(2024, 6, 3), date(2024, 6, 4), date(2024, 6, 5)]
+    audits: dict[str, Any] = {}
+    for i in range(10):
+        rows: list[Any] = []
+        for d in days:
+            n = 60 if (d == days[1] and i < 5) else 390  # half the market stops early on day 2
+            rows += _minute_rows(d, 100.0, n)
+        audits[f"S{i}"] = qi.audit_intraday(f"S{i}", rows, None)
+    assert audits["S0"]["truncated_days"] == ["2024-06-04"]
+    assert qi.market_bad_days(audits) == {"2024-06-04": "5/10"}
+
+    bad, start = qi.load_intraday_exceptions(
+        Path("configs/intraday_exceptions.yml"), "alpaca", "SW"
+    )
+    assert date(2024, 12, 23) in bad and start == date(2024, 7, 8)
+    kept = qi.regular_session(_minute_rows(date(2024, 12, 23), 1.0, 5), exclude=bad)
+    assert kept == []
