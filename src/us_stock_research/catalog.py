@@ -107,6 +107,19 @@ def describe_extras(tables: TableStore) -> list[str]:
         counts = sorted(((st, src, n) for (st, src), n in tally.items()), key=lambda x: -x[2])
         parts = "，".join(f"{st}/{src} {n}" for st, src, n in counts)
         out.append(f"2000 年以来成分期价格覆盖：{parts}")
+    for kind, label in (("sec_fsds", "SEC 财报数据集"), ("sec_insider", "SEC 内部人交易")):
+        qs = tables.keys(kind)
+        if qs:
+            agg = tables.aggregate(kind, "count(*)")
+            out.append(
+                f"{label}：{len(qs)} 个季度（{qs[0]} 至 {qs[-1]}），{agg[0] if agg else 0:,} 行"
+            )
+    if tables.has("meta", "ticker_cik"):
+        tally2: dict[str, int] = {}
+        for (src,) in tables.read("meta", "ticker_cik", "source"):
+            tally2[src] = tally2.get(src, 0) + 1
+        parts2 = "，".join(f"{k} {v}" for k, v in sorted(tally2.items(), key=lambda x: -x[1]))
+        out.append(f"历史代码→SEC 编号（2009 年后成分期）：{parts2}")
     delisted = tables.keys("daily_delisted")
     if delisted:
         out.append(f"前成分股日线（已剔除/退市）：{len(delisted)} 只")

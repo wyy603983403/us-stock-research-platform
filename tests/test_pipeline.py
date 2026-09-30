@@ -1176,3 +1176,105 @@ def test_independent_cross_section_matches_engine() -> None:
             b = vx.backtest(c, as_dicts, history, haircut=cut, excluded={"S5"})
             result = vx.compare(a, b)
             assert result["match"], (sig["name"], cut, result)
+
+
+def _zip(files: dict[str, str]) -> bytes:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, text in files.items():
+            z.writestr(name, text)
+    return buf.getvalue()
+
+
+def test_sec_bulk_parsers_and_quarters() -> None:
+    from us_stock_research.collectors import sec_bulk as sb
+
+    assert sb.quarters("2009q3", "2010q2") == ["2009q3", "2009q4", "2010q1", "2010q2"]
+    assert sb.latest_quarter(date(2026, 9, 30)) == "2026q2"
+    assert sb.latest_quarter(date(2026, 2, 1)) == "2025q4"
+    assert sb.parse_date("31-MAR-2024") == date(2024, 3, 31)
+    assert sb.parse_date("20240331") == date(2024, 3, 31) and sb.parse_date("") is None
+
+    sub = (
+        "adsh\tcik\tname\tsic\tform\tperiod\tfy\tfp\tfiled\n"
+        "A1\t320193\tAPPLE INC\t3571\t10-Q\t20240331\t2024\tQ2\t20240503\n"
+        "A2\t1\tFUND\t\tN-CSR\t20240331\t2024\tQ2\t20240503\n"
+    )
+    num = (
+        "adsh\ttag\tversion\tddate\tqtrs\tuom\tsegments\tcoreg\tvalue\tfootnote\n"
+        "A1\tAssets\tus-gaap/2023\t20240331\t0\tUSD\t\t\t337411000000\t\n"
+        "A1\tAssets\tus-gaap/2023\t20240331\t0\tUSD\tBusinessSegments=X;\t\t1\t\n"  # segment
+        "A1\tRevenues\t0000320193-24-000069\t20240331\t1\tUSD\t\t\t5\t\n"  # custom tag
+        "A1\tEntityCommonStockSharesOutstanding\tdei/2023\t20240419\t0\tshares\t\t\t15\t\n"
+        "A1\tFooBar\tus-gaap/2023\t20240331\t0\tUSD\t\t\t9\t\n"  # not in TAGS
+        "A2\tAssets\tus-gaap/2023\t20240331\t0\tUSD\t\t\t7\t\n"  # not a 10-K/10-Q
+    )
+    rows = sb.parse_fsds(_zip({"sub.txt": sub, "num.txt": num}))
+    assert [(r[9], r[13]) for r in rows] == [
+        ("Assets", 337411000000.0),
+        ("EntityCommonStockSharesOutstanding", 15.0),
+    ]
+    assert rows[0][3] == 3571 and rows[0][8] == date(2024, 5, 3)
+
+    ins = sb.parse_insider(
+        _zip(
+            {
+                "SUBMISSION.tsv": "ACCESSION_NUMBER\tFILING_DATE\tISSUERCIK\tISSUERNAME\t"
+                "ISSUERTRADINGSYMBOL\nX1\t02-JAN-2008\t1001\tLEHMAN BROTHERS\tleh\n",
+                "REPORTINGOWNER.tsv": "ACCESSION_NUMBER\tRPTOWNERCIK\tRPTOWNERNAME\t"
+                "RPTOWNER_RELATIONSHIP\tRPTOWNER_TITLE\nX1\t77\tFULD\tOfficer\tCEO\n",
+                "NONDERIV_TRANS.tsv": "ACCESSION_NUMBER\tTRANS_DATE\tTRANS_CODE\tTRANS_SHARES\t"
+                "TRANS_PRICEPERSHARE\tTRANS_ACQUIRED_DISP_CD\tSHRS_OWND_FOLWNG_TRANS\t"
+                "DIRECT_INDIRECT_OWNERSHIP\nX1\t28-DEC-2007\tP\t1000\t62.5\tA\t5000\tD\n",
+            }
+        )
+    )
+    assert ins == [
+        [
+            "X1",
+            date(2008, 1, 2),
+            1001,
+            "LEHMAN BROTHERS",
+            "LEH",
+            77,
+            "FULD",
+            "Officer",
+            "CEO",
+            date(2007, 12, 28),
+            "P",
+            1000.0,
+            62.5,
+            "A",
+            5000.0,
+            "D",
+        ]
+    ]
+
+
+def test_cik_map_picks_the_company_using_the_ticker_during_membership() -> None:
+    from us_stock_research.collectors.cik_map import choose
+
+    filings = {
+        "AAL": [(6201, date(2016, 5, 1), "AMERICAN AIRLINES")] * 3,
+        "Q": [(68622, date(2008, 1, 5), "QWEST")] * 4 + [(9999, date(2025, 12, 1), "QNITY")] * 2,
+        "DUP": [(1, date(2012, 1, 1), "A")] * 2 + [(2, date(2012, 2, 1), "B")] * 2,
+    }
+    intervals = [
+        ("AAL", date(2015, 3, 23), date(2024, 9, 23)),
+        ("Q", date(2000, 7, 6), date(2011, 4, 1)),
+        ("Q", date(2025, 11, 3), None),
+        ("DUP", date(2011, 1, 1), None),
+        ("NONE", date(2010, 1, 1), None),
+        ("OLD", date(1996, 1, 2), date(2005, 1, 1)),
+    ]
+    rows, stats = choose(intervals, filings, {"NONE": 42}, date(2009, 1, 1))
+    got = {(r[0], r[1]): (r[3], r[5]) for r in rows}
+    assert got[("AAL", date(2015, 3, 23))] == (6201, "insider")
+    assert got[("Q", date(2000, 7, 6))] == (68622, "insider")
+    assert got[("Q", date(2025, 11, 3))] == (9999, "insider")
+    assert got[("DUP", date(2011, 1, 1))] == (None, "ambiguous")
+    assert got[("NONE", date(2010, 1, 1))] == (42, "override")
+    assert stats["before_since"] == 1
