@@ -92,6 +92,7 @@ echo "== 杠杆趋势演练（${LASTDAY}，只写文件）"
   || echo "  演练记账失败"
 LT_LEDGER=portfolio/rehearsal/spy_trend_leverage_2x.yml
 LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
-.venv/bin/usr-lt-intent --contract research/spy-trend-leverage-2x/study.yml --as-of "$LASTDAY" \
+# 熔断线 40%：用户 2026-10-01 决定（2 倍杠杆回测最大回撤 −38%；15% 会让 38% 的交易日处于只减仓）
+.venv/bin/usr-lt-intent --contract research/spy-trend-leverage-2x/study.yml --as-of "$LASTDAY" --breaker 0.40 \
   $LT_HOLD 2>&1 | tail -n 1 || echo "  生成失败"
 echo "完成 $(date '+%Y-%m-%d %H:%M')"

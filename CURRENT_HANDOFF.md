@@ -47,5 +47,6 @@
 19. SPY 200 日均线 + 2 倍杠杆（预先登记 36ede99，`usr-leveraged-trend`/`usr-verify-lt`）：年化 11.5% vs SPY 8.8%、
     最差 12 月 −34%、DSR 0.976、与 SSO 模型差 0.11%，唯独超额收益区间下限 −0.27%/月不为正 → 未通过。
     SPY 日线已补到 1993 年起，新增 SSO。试验登记 7 组。见 docs/results/spy-trend-leverage-2x.md。
-20. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+20. 杠杆趋势每日演练 `usr-lt-intent`（SSO/BIL，熔断线 40% 为用户决定）已接入每日更新；首次运行建仓（全现金 10 万）。
+21. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
