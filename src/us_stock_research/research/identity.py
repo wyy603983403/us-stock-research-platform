@@ -44,13 +44,14 @@ def build(
     first_day: dict[str, date],
     same_company: set[str],
     spliced: set[str],
+    manual: list[tuple[str, date, date | None, str]] | None = None,
 ) -> list[tuple[str, date, date | None, str]]:
     """``same_company``: "SYM@start" keys a human confirmed; ``spliced``: symbols whose early
     history is borrowed from a successor ticker (dated aliases) and is therefore correct."""
     by_symbol: dict[str, list[tuple[date, date | None]]] = {}
     for sym, start, end in sorted(history, key=lambda h: (h[0], h[1])):
         by_symbol.setdefault(sym, []).append((start, end))
-    out: list[tuple[str, date, date | None, str]] = []
+    out: list[tuple[str, date, date | None, str]] = list(manual or [])
     for sym, intervals in by_symbol.items():
         segs = sorted(segments.get(sym, []), key=lambda s: s[0])
         latest_cik = next((s[2] for s in reversed(segs) if s[2] is not None), None)
@@ -78,7 +79,7 @@ def build(
                 out.append((sym, start, stop, f"stored prices start {first}"))
             # within-interval CIK change whose part the series cannot cover (IR in 2020)
             for seg_start, seg_end, cik, _name in inside:
-                if cik not in (None, latest_cik) and first > seg_start + GRACE:
+                if cik not in (None, latest_cik) and first > max(seg_start, DATA_START) + GRACE:
                     out.append((sym, seg_start, seg_end, f"segment cik {cik} before series"))
     return sorted(set(out), key=lambda r: (r[0], r[1]))
 
@@ -121,9 +122,21 @@ def main(argv: list[str] | None = None) -> int:
         if "@" not in old and new in first_day:
             first_day.setdefault(old, first_day[new])
     same: set[str] = set()
+    manual: list[tuple[str, date, date | None, str]] = []
     if args.reviewed.exists():
-        same = set((yaml.safe_load(args.reviewed.read_text()) or {}).get("same_company") or [])
-    rows_out = build(history, segments, first_day, same, spliced)  # type: ignore[arg-type]
+        reviewed = yaml.safe_load(args.reviewed.read_text()) or {}
+        same = set(reviewed.get("same_company") or [])
+        for item in reviewed.get("different_company") or []:
+            end = item.get("end")
+            manual.append(
+                (
+                    str(item["symbol"]),
+                    date.fromisoformat(str(item["start"])),
+                    date.fromisoformat(str(end)) if end else None,
+                    f"reviewed: {item['reason']}",
+                )
+            )
+    rows_out = build(history, segments, first_day, same, spliced, manual)  # type: ignore[arg-type]
     tables.write(
         "meta",
         "price_identity",

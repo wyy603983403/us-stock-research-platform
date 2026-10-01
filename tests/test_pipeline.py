@@ -1354,6 +1354,11 @@ def test_identity_blocks_reused_tickers_and_dated_alias_splices() -> None:
     assert ("RIG", date(1999, 12, 31)) not in keys  # reviewed: same company
     assert ("CNC", date(1997, 1, 15)) in keys  # series starts mid-interval
     assert not any(s == "ETN" for s, *_ in blocked)  # reorganisation, continuous series
+    etn96 = [("ETN", d(1996, 1, 2), None)]
+    etn_segs = {"ETN": [(d(1996, 1, 2), d(2012, 12, 1), 20, "E"), (d(2012, 12, 1), None, 21, "P")]}
+    assert build(etn96, etn_segs, {"ETN": d(2000, 1, 3)}, set(), set()) == []  # pre-2000 start
+    manual = [("CB", d(1996, 1, 2), d(2016, 1, 19), "reviewed")]
+    assert build([], {}, {}, set(), set(), manual) == manual
     assert ("IR", date(2010, 11, 17)) in keys  # old IR part not covered by today's IR series
     assert not any(s == "IR" for s, *_ in build(history, segments, first, set(), {"IR"}))
 

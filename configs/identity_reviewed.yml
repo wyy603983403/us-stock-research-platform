@@ -2,3 +2,10 @@
 # 格式：代码@成分期开始日。其余编号不同的早期成分期一律视为“无可信价格”。
 same_company:
   - RIG@1999-12-31   # Transocean Inc. 2008 年迁册瑞士成为 Transocean Ltd.，同一业务、价格连续
+
+# 规则查不出、需人工拦截的：这段时间在指数里的公司，和现在这个代码下保存的价格不是同一家。
+different_company:
+  - symbol: CB
+    start: 1996-01-02
+    end: 2016-01-19
+    reason: "老 Chubb Corp；2016 年 ACE 收购后改名 Chubb 并沿用 CB，雅虎 CB 早年价格属于 ACE"
