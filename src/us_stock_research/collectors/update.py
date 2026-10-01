@@ -29,7 +29,8 @@ import httpx
 from us_stock_research.bars import DailyBar, merge_bars
 from us_stock_research.collectors.yahoo_daily import USER_AGENT, fetch_symbol
 from us_stock_research.config import load_settings
-from us_stock_research.quality.ohlcv import audit_bars
+from us_stock_research.quality.intraday import last_closed_session
+from us_stock_research.quality.ohlcv import audit_bars, load_exceptions
 from us_stock_research.storage import BarStore, open_store
 
 OVERLAP_DAYS = 10
@@ -67,7 +68,7 @@ def update_symbol(
     action, reason = plan(existing, tail)
     if action == "refresh":
         bars, divs = fetch(symbol, full_start, today)
-        merged, all_divs = bars, divs
+        merged, all_divs = merge_bars([], bars), divs  # sorted, one bar per day
     else:
         merged = merge_bars(existing, tail)
         all_divs = (store.read_dividends(symbol) if store.has_dividends(symbol) else {}) | tail_divs
@@ -94,6 +95,7 @@ def run_update(
     execute: bool,
     pause: float,
     sleep: Callable[[float], None] = time.sleep,
+    exceptions: Path | None = None,
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     failed: dict[str, str] = {}
@@ -103,8 +105,16 @@ def run_update(
         except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
             failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
         sleep(pause)
-    audited = {r["symbol"]: audit_bars(r["symbol"], store.read_bars(r["symbol"])) for r in results}
+    accepted, quarantine = load_exceptions(exceptions) if exceptions else ({}, {})
+    audited = {
+        r["symbol"]: audit_bars(
+            r["symbol"], store.read_bars(r["symbol"]), accepted.get(r["symbol"])
+        )
+        for r in results
+        if r["symbol"] not in quarantine  # already known bad: reported separately
+    }
     return {
+        "quarantined": sorted(s for s in quarantine if any(r["symbol"] == s for r in results)),
         "updated": len([r for r in results if r["new_days"] > 0]),
         "refreshed": [r for r in results if r["action"] == "refresh"],
         "appended_days": sum(r["new_days"] for r in results if r["action"] == "append"),
@@ -121,11 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pause", type=float, default=0.5)
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     parser.add_argument("--report", type=Path, help="write the JSON summary here too")
+    parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
     args = parser.parse_args(argv)
     settings = load_settings()
     store = open_store(settings)
     symbols = [s.upper() for s in args.symbols] or store.symbols()
-    today = datetime.now(UTC).date()
+    # never store a half-finished session (a run during US trading hours)
+    today = last_closed_session(datetime.now(UTC))
     with httpx.Client(
         timeout=settings.http_timeout_seconds, headers={"User-Agent": USER_AGENT}
     ) as client:
@@ -137,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             args.full_start,
             execute=args.execute,
             pause=args.pause,
+            exceptions=args.exceptions,
         )
     summary = {"dry_run": not args.execute, "date": today.isoformat(), **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)

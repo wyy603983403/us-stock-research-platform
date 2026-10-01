@@ -24,7 +24,8 @@ FLAG="--execute"; [ "${1:-}" = "--dry-run" ] && FLAG=""
 import json
 r = json.load(open("artifacts/universe/update_${STAMP}.json"))
 print(f"{r['date']}：{r['symbols']} 只标的，新增交易日 {r['appended_days']}，"
-      f"整段重下 {len(r['refreshed'])} 只，失败 {len(r['failed'])} 只，质量错误 {len(r['quality_errors'])} 只")
+      f"整段重下 {len(r['refreshed'])} 只，失败 {len(r['failed'])} 只，质量错误 {len(r['quality_errors'])} 只"
+      f"（不含已隔离 {len(r.get('quarantined', []))} 只）")
 for x in r["refreshed"][:10]:
     print("  重下", x["symbol"], "-", x["reason"])
 for s, e in list(r["quality_errors"].items())[:10]:

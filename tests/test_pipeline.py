@@ -1380,3 +1380,34 @@ def test_identity_blocks_reused_tickers_and_dated_alias_splices() -> None:
     assert not xs.is_blocked(
         {"TT": [(date(2002, 5, 13), date(2008, 6, 6))]}, "TT", date(2021, 1, 4)
     )
+
+
+def test_parse_chart_keeps_first_bar_of_a_repeated_day() -> None:
+    def bar(ts: int, close: float) -> tuple[int, float]:
+        return ts, close
+
+    rows = [bar(1727697600, 101.45), bar(1727740800, 101.478)]  # both 2024-09-30 at UTC-4
+    payload = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"gmtoffset": -14400},
+                    "timestamp": [r[0] for r in rows],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [r[1] for r in rows],
+                                "high": [r[1] for r in rows],
+                                "low": [r[1] for r in rows],
+                                "close": [r[1] for r in rows],
+                                "volume": [0, 0],
+                            }
+                        ],
+                    },
+                }
+            ],
+            "error": None,
+        }
+    }
+    bars = parse_chart(payload, allow_missing_adj=True)
+    assert len(bars) == 1 and bars[0].close == 101.45

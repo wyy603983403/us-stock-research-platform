@@ -40,11 +40,17 @@ def parse_chart(payload: dict[str, Any], allow_missing_adj: bool = False) -> lis
     if adj is None:
         raise ValueError("payload has no adjclose series; request includeAdjustedClose=true")
     bars: list[DailyBar] = []
+    seen: set[date] = set()
     for i, ts in enumerate(stamps):
         values = (quote["open"][i], quote["high"][i], quote["low"][i], quote["close"][i], adj[i])
         if any(v is None for v in values):
             continue  # Yahoo emits null rows for halted/partial days; the quality gate flags gaps
         day = datetime.fromtimestamp(ts + offset, tz=UTC).date()
+        if day in seen:
+            # FX/index charts sometimes append the live session under the same date: keep the
+            # completed bar that came first
+            continue
+        seen.add(day)
         bars.append(
             DailyBar(
                 day=day,
