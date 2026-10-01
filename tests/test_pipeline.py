@@ -1062,7 +1062,7 @@ def test_cross_section_point_in_time_engine() -> None:
     assert summary["coverage_min"] == months["2020-06"]["coverage"] == 0.75  # GONE unpriced
     for path_ in (ROOT / "research").glob("*/study.yml"):
         if "kind: cross_section" in path_.read_text():
-            assert xs.load_xs_contract(path_)["selection"]["top_n"] in (50, 100)
+            assert xs.load_xs_contract(path_)["selection"]["top_n"] in (30, 50, 100)
 
 
 def test_ticker_aliases_borrow_successor_history() -> None:
@@ -1702,3 +1702,65 @@ def test_rehearsal_ledger_books_fills_dividends_and_refuses_stale_lists(tmp_path
     path = tmp_path / "ledger.yml"
     path.write_text(rh.dump_ledger(ledger2))
     assert rh.load_ledger(path, 0.0)["positions"] == {"BBB": 93.0}
+
+
+def test_insider_buying_engine_matches_independent() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import cross_section as xs
+    from us_stock_research.research import insider as ins
+    from us_stock_research.research import verify_xsec as vx
+
+    assert ins.is_insider("Director,TenPercentOwner") and not ins.is_insider("TenPercentOwner")
+    buys = [(date(2020, 1, 2), 1, 2e6), (date(2020, 3, 1), 2, 1e6), (date(2020, 3, 1), 1, 1e6)]
+    assert ins.score(buys, date(2020, 1, 1), 182) == 0.0
+    assert ins.score(buys, date(2020, 3, 1), 182) == 2 + 4 / 5  # two buyers, $4m
+    assert ins.score(buys, date(2020, 7, 3), 182) == 2 + 2 / 3  # Jan 2 left the window
+    rng = random.Random(5)
+    days = trading_days(date(2017, 1, 3), date(2021, 6, 30))
+    series: dict[str, list[float | None]] = {}
+    raw: list[tuple] = []  # type: ignore[type-arg]
+    segments: dict[str, list[tuple[date, date | None, int | None]]] = {}
+    roles = ["Director", "Officer", "Director,Officer", "TenPercentOwner", "Other"]
+    for k in range(20):
+        p, out = 40.0 + k, []
+        for _ in days:
+            p *= 1 + rng.gauss(0.0003, 0.015)
+            out.append(None if rng.random() < 0.01 else p)
+        series[f"S{k}"] = out
+        segments[f"S{k}"] = [(date(2000, 1, 1), None, 500 + k if k != 19 else None)]
+        for _ in range(rng.randint(0, 25)):
+            filed = days[rng.randrange(len(days))]
+            code = rng.choice(["P", "P", "P", "S"])
+            raw.append((500 + k, filed, rng.randint(1, 6), rng.uniform(100, 50_000),
+                        rng.uniform(10, 90), rng.choice(roles), code, "A"))  # fmt: skip
+    prices = xs.Prices(days, series)
+    history = [(f"S{k}", date(2015, 1, 1), None) for k in range(20)]
+    c = {
+        "name": "ins",
+        "universe": {"start": date(2018, 3, 1), "end": date(2021, 5, 31), "min_history_days": 253},
+        "insider": {"window_days": 182},
+        "signal": {"name": "insider_buying"},
+        "selection": {"top_n": 4, "min_score": 0.000001},
+        "execution_lag_days": 1,
+        "transaction_cost_bps": 10,
+    }
+    engine_buys: dict[int, list[tuple[date, int, float]]] = {}
+    for issuer, filed, owner, shares, price, rel, code, acq in sorted(raw, key=lambda r: r[:3]):
+        if code == "P" and acq == "A" and ins.is_insider(rel):
+            engine_buys.setdefault(issuer, []).append((filed, owner, shares * price))
+    for v in engine_buys.values():
+        v.sort()
+    scorer = ins.InsiderBuying(c, days, engine_buys, segments)
+    as_dicts = {
+        s: {d: v for d, v in zip(days, vals, strict=True) if v} for s, vals in series.items()
+    }
+    a = xs.run(c, prices, history, excluded={"S5"}, scorer=scorer)["months"]
+    b = vx.backtest(
+        c, as_dicts, history, excluded={"S5"}, fundamentals=vx.InsiderSignal(c, raw, segments)
+    )
+    result = vx.compare(a, b)
+    assert result["match"], result
+    assert any(len(m["top"]) < 4 for m in a)  # months with fewer buyers than top_n hold fewer
+    assert all(m["eligible"] == m["insider"]["candidates"] for m in a)  # benchmark = all members

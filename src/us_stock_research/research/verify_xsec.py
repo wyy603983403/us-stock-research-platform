@@ -210,6 +210,69 @@ class Fundamentals:
         return out
 
 
+class InsiderSignal:
+    """Independent insider-buying score from raw transaction rows.
+
+    ``rows``: ``issuer_cik, filing_date, owner_cik, shares, price, relationship, trans_code,
+    acquired_disposed``.
+    """
+
+    def __init__(
+        self,
+        contract: dict[str, Any],
+        rows: list[tuple[Any, ...]],
+        segments: dict[str, list[tuple[date, date | None, int | None]]],
+    ) -> None:
+        self.window = timedelta(days=int(contract["insider"]["window_days"]))
+        self.segments = segments
+        self.by_issuer: dict[int, list[tuple[date, int, float]]] = {}
+        for issuer, filed, owner, shares, price, rel, code, acq in rows:
+            if code != "P" or acq != "A" or not shares or not price or shares <= 0 or price <= 0:
+                continue
+            if issuer is None or owner is None:
+                continue
+            roles = set((rel or "").replace(" ", "").split(","))
+            if not any(r.startswith(("Director", "Officer")) for r in roles):
+                continue
+            self.by_issuer.setdefault(int(issuer), []).append((filed, int(owner), shares * price))
+
+    def scores(self, candidates: list[str], cal: list[date], pos: int) -> dict[str, float]:
+        day = cal[pos]
+        out = {}
+        for sym in candidates:
+            cik = next(
+                (
+                    c
+                    for a, b, c in self.segments.get(sym, [])
+                    if a <= day and (b is None or day < b)
+                ),
+                None,
+            )
+            mine = self.by_issuer.get(cik, []) if cik is not None else []
+            hits = [(o, dollars) for filed, o, dollars in mine if day - self.window < filed <= day]
+            if not hits:
+                out[sym] = 0.0
+                continue
+            millions = math.fsum(d for _, d in hits) / 1e6
+            out[sym] = len({o for o, _ in hits}) + millions / (1 + millions)
+        return out
+
+
+def insider_rows(tables: Any) -> list[tuple[Any, ...]]:
+    pattern = str(tables.root / "parquet" / "sec_insider" / "*.parquet").replace("'", "''")
+    con = tables._duckdb().connect()  # noqa: SLF001
+    try:
+        return list(
+            con.execute(
+                "SELECT issuer_cik, filing_date, owner_cik, shares, price, relationship, "
+                f"trans_code, acquired_disposed FROM read_parquet('{pattern}') "
+                "WHERE trans_code = 'P'"
+            ).fetchall()
+        )
+    finally:
+        con.close()
+
+
 def period_return(
     series: Series | None, cal: list[date], entry: int, exit_: int, haircut: float
 ) -> float:
@@ -244,7 +307,7 @@ def backtest(
     haircut: float = 0.0,
     excluded: set[str] | None = None,
     blocked: list[tuple[str, date, date | None]] | None = None,
-    fundamentals: Fundamentals | None = None,
+    fundamentals: Fundamentals | InsiderSignal | None = None,
 ) -> list[dict[str, Any]]:
     uni = contract["universe"]
     series = {s: Series(p) for s, p in prices.items() if p}
@@ -277,8 +340,8 @@ def backtest(
             if price_near(ser, cal, i - need, STALE) is None:
                 continue
             candidates.append(s)
-        if spec["name"] == "quality_value":
-            assert fundamentals is not None, "quality_value needs fundamentals"
+        if spec["name"] in ("quality_value", "insider_buying"):
+            assert fundamentals is not None, f"{spec['name']} needs its non-price data"
             scores = fundamentals.scores(candidates, cal, i)
         else:
             scores = {}
@@ -290,7 +353,8 @@ def backtest(
             order = sorted(scores.items(), key=lambda kv: (kv[1], kv[0]))
         else:
             order = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
-        picks = [s for s, _ in order[:top]]
+        floor = contract["selection"].get("min_score")
+        picks = [s for s, v in order if floor is None or v >= float(floor)][:top]
         entry = i + lag
         exit_ = min(pos[d_next] + lag, len(cal) - 1)
         rets = {s: period_return(series.get(s), cal, entry, exit_, haircut) for s in scores}
@@ -401,8 +465,12 @@ def main(argv: list[str] | None = None) -> int:
     blocked_list = [(s, a, b) for s, spans in blocked_map.items() for a, b in spans]
     aliases = xs.load_aliases(args.aliases)
     scorer, _ = xs.build_scorer(contract, tables, loaded, aliases)
-    independent_fund = None
-    if scorer is not None:
+    independent_fund: Fundamentals | InsiderSignal | None = None
+    if scorer is not None and contract["signal"]["name"] == "insider_buying":
+        from us_stock_research.research import fundamentals as fu
+
+        independent_fund = InsiderSignal(contract, insider_rows(tables), fu.load_segments(tables))
+    elif scorer is not None:
         from us_stock_research.research import fundamentals as fu
 
         source = str(contract["fundamentals"].get("source", "sec_fsds"))

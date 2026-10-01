@@ -36,7 +36,9 @@ from us_stock_research.tables import TableStore
 
 MAX_STALE_DAYS = 5  # a signal price may come from up to 5 trading days earlier (halts, holidays)
 SIGNALS = ("momentum_12_1", "low_volatility", "quality_value", "insider_buying")
-CROSS_SECTIONAL = ("quality_value", "insider_buying")  # scored from fundamentals over the whole cross-section
+# scored over the whole cross-section from non-price data (fundamentals, insider filings)
+CROSS_SECTIONAL = ("quality_value", "insider_buying")
+STATS_KEY = {"quality_value": "fundamentals", "insider_buying": "insider"}
 Scorer = Callable[[list[str], int], tuple[dict[str, float], dict[str, int]]]
 REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "inference")
 
@@ -50,7 +52,8 @@ def load_xs_contract(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} lacks {missing}")
     if raw["signal"]["name"] not in SIGNALS:
         raise ValueError(f"unknown signal {raw['signal']['name']!r}; known: {SIGNALS}")
-    block = {"quality_value": "fundamentals", "insider_buying": "insider"}.get(raw["signal"]["name"])
+    needs = {"quality_value": "fundamentals", "insider_buying": "insider"}
+    block = needs.get(raw["signal"]["name"])
     if block and block not in raw:
         raise ValueError(f"{path}: signal {raw['signal']['name']} needs a {block} block")
     for key in ("start", "end"):
@@ -191,6 +194,8 @@ def run(
         ranked = sorted(
             eligible, key=lambda s: (eligible[s] if lower_is_better else -eligible[s], s)
         )
+        if sel.get("min_score") is not None:  # e.g. only stocks with insider purchases
+            ranked = [s for s in ranked if eligible[s] >= float(sel["min_score"])]
         picks = ranked[:top_n]
         entry, exit_ = t + lag, min(t_next + lag, len(prices.days) - 1)
         rets: dict[str, float] = {}
@@ -225,7 +230,7 @@ def run(
                 "turnover_one_way": turnover,
                 "early_exits": int(delisted),
                 "top": picks[:10],
-                **({"fundamentals": stats} if stats else {}),
+                **({STATS_KEY.get(sig["name"], "signal_stats"): stats} if stats else {}),
             }
         )
     return {"months": months}
@@ -391,11 +396,17 @@ def load_prices(tables: TableStore, start: date, end: date) -> Prices:
 def build_scorer(
     contract: dict[str, Any], tables: TableStore, prices: Prices, aliases: dict[str, str]
 ) -> tuple[Scorer | None, str | None]:
-    """The fundamentals scorer for ``quality_value`` contracts and the id of its input rows."""
-    if contract["signal"]["name"] not in CROSS_SECTIONAL:
+    """The scorer of a non-price signal and the content id of its input rows."""
+    name = contract["signal"]["name"]
+    if name not in CROSS_SECTIONAL:
         return None, None
     from us_stock_research.research import fundamentals as fu
 
+    if name == "insider_buying":
+        from us_stock_research.research.insider import InsiderBuying, load_buys
+
+        buys, buys_id = load_buys(tables)
+        return InsiderBuying(contract, prices.days, buys, fu.load_segments(tables)), buys_id
     spec = contract["fundamentals"]
     reports, fund_id = fu.load_reports(
         tables, fu.tag_lists(spec), str(spec.get("source", "sec_fsds"))
