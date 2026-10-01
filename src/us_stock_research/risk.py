@@ -14,7 +14,7 @@ class RiskConfig(BaseModel):
 
     trading_enabled: Literal[False]
     # Principal first: worst trailing-12-month loss must stay within this fraction of capital.
-    max_worst_12m_loss: float = Field(gt=0, le=0.25)
+    max_worst_12m_loss: float = Field(gt=0, le=0.50)  # user decision 2026-10-01
     # Reported, not enforced (user accepts any drawdown if the 12-month loss cap holds).
     max_drawdown: float | None = Field(default=None, gt=0, le=1)
     max_single_asset_weight: float = Field(gt=0, le=1)

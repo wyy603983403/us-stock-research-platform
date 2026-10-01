@@ -1,6 +1,7 @@
 trading_enabled: false
-# 本金优先：任意滚动 12 个月亏损不得超过本金的 25%
-max_worst_12m_loss: 0.25
+# 任意滚动 12 个月亏损上限。2026-10-01 用户决定由 25% 放宽到 50%（“可以承担一定风险，追求收益”）。
+# 此前登记的研究仍按各自登记时的 25% 评估，不追溯。
+max_worst_12m_loss: 0.50
 # 最大回撤只报告、不设硬上限
 max_drawdown: null
 max_single_asset_weight: 0.35

@@ -437,8 +437,9 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     if dsr is None or dsr < 0.95:
         fails.append(f"Deflated Sharpe {dsr if dsr is None else round(dsr, 3)} < 0.95")
     worst = summary["strategy"]["worst_rolling_12m_return"]
-    if worst is not None and worst < -0.25:
-        fails.append(f"最差滚动 12 个月 {worst:.1%}，超过 25% 亏损上限")
+    cap = float(contract.get("risk", {}).get("max_worst_12m_loss", 0.25))  # as registered
+    if worst is not None and worst < -cap:
+        fails.append(f"最差滚动 12 个月 {worst:.1%}，超过 {cap:.0%} 亏损上限")
     if summary["coverage_min"] < 0.9:
         fails.append(f"最低价格覆盖率 {summary['coverage_min']:.1%} < 90%")
     fund = summary.get("fundamentals_coverage_min")

@@ -50,7 +50,7 @@ def test_repo_contracts_and_risk_config_are_valid() -> None:
             load_contract(path)
     risk = load_risk(ROOT / "configs/risk/default.yml")
     assert risk.trading_enabled is False
-    assert risk.max_worst_12m_loss <= 0.25
+    assert risk.max_worst_12m_loss <= 0.50
 
 
 def test_contract_rejects_benchmark_outside_universe() -> None:
