@@ -1321,6 +1321,8 @@ def test_identity_blocks_reused_tickers_and_dated_alias_splices() -> None:
     from us_stock_research.research import cross_section as xs
     from us_stock_research.research.identity import build
 
+    d = date
+
     history = [
         ("TT", date(2002, 5, 13), date(2008, 6, 6)),  # American Standard / Trane Inc.
         ("TT", date(2020, 3, 3), None),  # Trane Technologies (ex Ingersoll-Rand)
