@@ -314,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         "--retry", action="store_true", help="also retry tickers an earlier run did not find"
     )
     parser.add_argument("--aliases", type=Path, default=Path("configs/ticker_aliases.yml"))
+    parser.add_argument("--only", nargs="*", help="limit the former-member download to these")
     parser.add_argument("--max-waits", type=int, default=14)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
@@ -368,6 +369,15 @@ def main(argv: list[str] | None = None) -> int:
             print("put TIINGO_TOKEN=<token> in .env first", file=sys.stderr)
             return 2
         targets = [(s, max(a, args.since), b) for s, a, b in missing]
+        kept: list[list[Any]] = []
+        if args.only:
+            wanted = {o.upper() for o in args.only}
+            targets = [t for t in targets if t[0] in wanted]
+            if tables.has("meta", "sp500_coverage"):  # keep earlier results of everyone else
+                cols = ", ".join(COVERAGE_SCHEMA)
+                for row in tables.read("meta", "sp500_coverage", cols):
+                    if row[0] not in wanted and row[5] not in ("ok", "partial"):
+                        kept.append(list(row))
         aliases: dict[str, str] = {}
         if args.aliases.exists():
             raw_aliases = (yaml.safe_load(args.aliases.read_text()) or {}).get("aliases") or {}
@@ -409,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             cov = window_coverage(res["days"], a, b, today) if res["days"] else 0.0
             coverage_rows.append([s, a, b, res["source"] or "none", cov, res["status"]])
+        coverage_rows += kept
         statuses: dict[str, int] = {}
         for r in coverage_rows[n_current:]:
             key = f"{r[5]} ({r[3]})" if r[5] == "stored" else r[5]
