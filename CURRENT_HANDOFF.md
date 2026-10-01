@@ -1,4 +1,4 @@
-# 当前交接（2026-09-29）
+# 当前交接（2026-10-01）
 
 目标：美股自动化交易系统，按 `docs/trading-roadmap.md` 分阶段推进；`trading_enabled: false`，未接券商下单。
 
@@ -35,4 +35,10 @@
 12. SEC 批量数据（2026-09-30）：`usr-collect-sec-bulk`（财报数据集 2009q1–2026q2、内部人交易 2006q1–2026q2）；首次下载 FSDS 有 3 个季度断线（已加重试）。历史代码→CIK `usr-build-cik-map`：用 Form 4 里的（当时代码, CIK, 日期）匹配，CIK 变更处切段，人工复核表 `configs/cik_overrides.yml`；2009 年后成分期对应率 99.9%（仅 VMRK 无数据）。覆盖率检查发现：SEC 2024-12 重处理后封面流通股数缺失（改用稀释加权股数算市值）、收入/净利/权益有替代科目 → 科目扩到 55 个，需 `--what fsds --refresh` 重新解析。
 13. 2026-10-01：前成分股下载完成（雅虎 136、Tiingo 157；拒收 163、未找到 156；EMC/APC/BRCM 等大量被收购公司 Tiingo 未返回，待用户用 curl 诊断）。价格覆盖率 2013 年起 ≥90%，2001–2012 为 61%–89%。新增价格身份检查 `usr-build-identity`（`research/identity.py` → `meta/price_identity`）：同一代码早期成分期 CIK 与现今不同、或价格序列晚于成分期开始，均视为无可信价格（仍计入成员、计入覆盖率）；人工表 `configs/identity_reviewed.yml`（RIG 同一公司；CB 2016 年前为老 Chubb）。当前拦截 24 段。别名新增 GPS→GAP、CTL→LUMN、EQR→VMRK（推断）与带日期的 `IR@2020-03-02: TT`。CIK 映射起点改为 2006。定时任务因 macOS 权限（launchd 访问“文稿”）失败，需给 /bin/bash 完全磁盘访问权限。GitHub 上用户另有 CI 自建运行器与 mypy 修正提交，已 rebase 合并。
 14. 2026-10-01 正式运行四个时点成分股研究（v1 2001 起、v2 2012 起，v2 在看结果前登记）：均未通过晋级（相对同池等权超额收益置信区间下限不为正）。低波动风险显著更低但收益更低，且 v1 中 2008 年最差 12 月 −31.7% 超过 25% 约束。结果见 docs/results/sp500-pit-cross-section.md；试验登记现有 4 个不同参数组。Tiingo 免费版无法提供被沿用代码的退市公司价格，2001–2011 覆盖率补不上。
-15. 待用户选择：修幸存者偏差（历史成分股）、基本面因子研究、路线图阶段 1（月度下单意向文件，不下单）、安装每日更新定时任务。
+15. 质量+价值研究（2026-10-01，预先登记 ad7fe92；同日在算任何收益前修订财报来源为 SEC company facts，ecf8735）：
+    拆股记录全量重查并记入 `meta/splits_checked`（`usr-collect-splits --yahoo-delisted`，每周一自动）；
+    company facts 下载 966 个 CIK（885 有数据，81 个为 2009 年前已消失的公司）到 `parquet/sec_companyfacts/`
+    （`usr-collect-fundamentals --all-ciks`）。财报覆盖率 ≥95%，独立实现逐月一致。结果未通过：相对等权
+    −0.04%/月，最差 12 月 −32.1%；归因显示价值 +0.16、盈利 +0.26 暴露显著，但无 alpha。见 docs/results/sp500-quality-value-pit.md。
+16. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+    2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
