@@ -131,7 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     for path in args.paths:
         try:
-            if (yaml.safe_load(path.read_text()) or {}).get("kind") == "cross_section":
+            kind = (yaml.safe_load(path.read_text()) or {}).get("kind")
+            if kind == "leveraged_trend":
+                from us_stock_research.research.leveraged_trend import load_lt_contract
+
+                lt = load_lt_contract(path)
+                print(f"OK   {path} ({lt['name']}, {lt.get('status')}, leveraged_trend)")
+                continue
+            if kind == "cross_section":
                 from us_stock_research.research.cross_section import load_xs_contract
 
                 raw = load_xs_contract(path)

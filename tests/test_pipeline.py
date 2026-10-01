@@ -46,7 +46,12 @@ def contract(**overrides: Any) -> StudyContract:
 
 def test_repo_contracts_and_risk_config_are_valid() -> None:
     for path in (ROOT / "research").glob("*/study.yml"):
-        if "kind: cross_section" not in path.read_text():  # validated by the xs engine test
+        text = path.read_text()
+        if "kind: leveraged_trend" in text:
+            from us_stock_research.research.leveraged_trend import load_lt_contract
+
+            assert load_lt_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
+        elif "kind: cross_section" not in text:  # validated by the xs engine test
             load_contract(path)
     risk = load_risk(ROOT / "configs/risk/default.yml")
     assert risk.trading_enabled is False
@@ -1764,3 +1769,50 @@ def test_insider_buying_engine_matches_independent() -> None:
     assert result["match"], result
     assert any(len(m["top"]) < 4 for m in a)  # months with fewer buyers than top_n hold fewer
     assert all(m["eligible"] == m["insider"]["candidates"] for m in a)  # benchmark = all members
+
+
+def test_leveraged_trend_engine_matches_independent() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import leveraged_trend as lt
+    from us_stock_research.research import verify_lt as vl
+
+    days = trading_days(date(2000, 1, 3), date(2004, 12, 31))
+    rng = random.Random(9)
+    prices, p = [], 100.0
+    for i in range(len(days)):
+        p *= 1 + rng.gauss(0.0006 if (i // 250) % 2 == 0 else -0.0008, 0.012)
+        prices.append(p)
+    yields = lt.forward_fill(days, {d: 1.0 + (i % 7) * 0.3 for i, d in enumerate(days[5::9])})
+    c = {
+        "name": "t",
+        "data": {"start": date(2001, 1, 1), "end": date(2004, 6, 30)},
+        "rule": {"sma_days": 200, "leverage": 2.0, "switch_cost_bps": 10},
+        "inference": {"resamples": 200, "block_size_months": 6, "confidence_level": 0.95,
+                      "random_seed": 1},
+        "risk": {"max_worst_12m_loss": 0.5},
+    }  # fmt: skip
+    res = lt.run(c, days, prices, yields)
+    assert vl.compare(res, vl.backtest(c, days, prices, yields))["match"]
+    assert 0 < res["time_in_market"] < 1 and res["switches"] > 0
+    assert res["months"][0] == "2001-01" and res["months"][-1] == "2004-06"
+    # leverage 1 with no switching cost and always on equals the asset itself
+    sim = lt.simulate(days, prices, yields, sma_days=1, leverage=1.0, switch_cost_bps=0,
+                      always_on=True)  # fmt: skip
+    assert all(abs(r - a) < 1e-15 for _, r, a, _ in sim)
+    # cash days earn the previous day's yield / 252; the first day of a new position pays costs
+    sim2 = lt.simulate(days, prices, yields, sma_days=200, leverage=2.0, switch_cost_bps=10)
+    k = next(i for i in range(1, len(sim2)) if not sim2[i][3] and not sim2[i - 1][3])
+    idx = days.index(sim2[k][0])
+    assert abs(sim2[k][1] - yields[idx - 1] / 100 / 252) < 1e-15  # type: ignore[operator]
+    # the model validation against a perfect 2x ETF built from the same model is exact
+    etf, v = {}, 100.0
+    on = lt.simulate(days, prices, yields, sma_days=1, leverage=2.0, switch_cost_bps=0,
+                     always_on=True)  # fmt: skip
+    etf[on[0][0]] = v
+    for d, r, _, _ in on[1:]:
+        v *= 1 + r
+        etf[d] = v
+    check = lt.validate_leverage_model(days, prices, yields, etf, 2.0)
+    assert abs(check["annualized_diff"]) < 1e-12 and check["tracking_error"] < 1e-12
