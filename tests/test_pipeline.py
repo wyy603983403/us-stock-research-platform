@@ -1656,3 +1656,49 @@ def test_company_facts_become_annual_rows() -> None:
     assert items and items["shares"] == 4.0 and items["filed"] == date(2024, 2, 20)
     assert fu.sic_on([(date(2015, 1, 1), 100), (date(2020, 1, 1), 200)], date(2014, 1, 1)) == 100
     assert fu.sic_on([(date(2015, 1, 1), 100), (date(2020, 1, 1), 200)], date(2021, 1, 1)) == 200
+
+
+def test_rehearsal_ledger_books_fills_dividends_and_refuses_stale_lists(tmp_path: Path) -> None:
+    from us_stock_research.trading import rehearsal as rh
+
+    assert rh.next_trading_day(date(2026, 9, 30)) == date(2026, 10, 1)
+    assert rh.next_trading_day(date(2026, 7, 2)) == date(2026, 7, 6)  # July 3 holiday, weekend
+    ledger = rh.load_ledger(tmp_path / "none.yml", 10_000.0)
+    first = {
+        "study": "s", "signal_day": "2026-08-31",
+        "orders": [
+            {"side": "BUY", "symbol": "AAA", "shares": 50, "current_shares": 0.0},
+            {"side": "BUY", "symbol": "BBB", "shares": 100, "current_shares": 0.0},
+        ],
+    }  # fmt: skip
+    ledger, rep = rh.book(ledger, first, date(2026, 9, 1), {"AAA": 100.0, "BBB": 60.0}, {}, 10.0)
+    # AAA: 5000 + 5 cost; BBB: 4995 cash left -> only 83 shares at 60.06 each
+    assert ledger["positions"]["AAA"] == 50 and ledger["positions"]["BBB"] == 83
+    assert any("cut" in f.get("note", "") for f in rep["fills"])
+    assert 0 <= ledger["cash_usd"] < 60.06
+    second = {
+        "study": "s", "signal_day": "2026-09-30",
+        "orders": [
+            {"side": "BUY", "symbol": "BBB", "shares": 10, "current_shares": 83.0},
+            {"side": "SELL", "symbol": "AAA", "shares": 50, "current_shares": 50.0},
+        ],
+    }  # fmt: skip
+    divs = {"AAA": {date(2026, 9, 15): 1.0, date(2026, 8, 20): 9.0}}  # only the later one counts
+    cash_before = ledger["cash_usd"]
+    ledger2, rep2 = rh.book(ledger, second, date(2026, 10, 1), {"AAA": 110.0, "BBB": 60.0},
+                            divs, 0.0)  # fmt: skip
+    assert rep2["dividends_usd"] == 50.0 and "AAA" not in ledger2["positions"]
+    assert ledger2["positions"]["BBB"] == 93
+    assert abs(ledger2["cash_usd"] - (cash_before + 50 + 5500 - 600)) < 0.01
+    assert ledger2["filled"] == ["2026-08-31", "2026-09-30"]
+    stale = dict(second, signal_day="2026-10-30")  # still assumes 50 AAA
+    for bad, why in ((second, "already booked"), (stale, "regenerate")):
+        try:
+            rh.book(ledger2, bad, date(2026, 11, 2), {"AAA": 1.0, "BBB": 60.0}, {}, 0.0)
+        except ValueError as exc:
+            assert why in str(exc)
+        else:
+            raise AssertionError(f"{bad['signal_day']} was booked")
+    path = tmp_path / "ledger.yml"
+    path.write_text(rh.dump_ledger(ledger2))
+    assert rh.load_ledger(path, 0.0)["positions"] == {"BBB": 93.0}

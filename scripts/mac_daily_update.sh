@@ -70,9 +70,15 @@ while not is_trading_day(nxt):
 print(d.isoformat() if nxt.month != d.month else "")
 PY
 )
+# 演练账本：上月订单按成交日收盘价模拟记账（成交日收盘后才会记）
+LEDGER=portfolio/rehearsal/etf_trend_baseline.yml
+if ls orders/etf_trend_baseline/*.json >/dev/null 2>&1; then
+  .venv/bin/usr-rehearsal-fill --study etf_trend_baseline --since 2026-09-30 2>&1 | tail -n 3 \
+    || echo "  演练记账失败"
+fi
 if [ -n "$ASOF" ] && [ ! -f "orders/etf_trend_baseline/${ASOF}.json" ]; then
   echo "== 月末订单意向演练（${ASOF}，只写文件）"
-  HOLD=""; [ -f portfolio/holdings.yml ] && HOLD="--holdings portfolio/holdings.yml"
+  HOLD=""; [ -f "$LEDGER" ] && HOLD="--holdings $LEDGER"
   .venv/bin/usr-order-intent --contract research/etf-trend-baseline/study.yml --as-of "$ASOF" $HOLD \
     | tail -n 3 || echo "  生成失败"
 fi
