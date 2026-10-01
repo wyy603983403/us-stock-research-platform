@@ -369,6 +369,11 @@ def apply_aliases_market(
                 splits[old] = list(splits.get(new, []))
                 if new in known:
                     known.add(old)
+            elif old not in known and new in known:
+                # same company under its new ticker (the old one is gone from Yahoo, e.g. GPS
+                # -> GAP): its split history is the new ticker's
+                splits[old] = list(splits.get(new, []))
+                known.add(old)
             continue
         until = date.fromisoformat(cut)
         own = actual.get(old) or [None] * len(days)

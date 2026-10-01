@@ -1505,6 +1505,11 @@ def test_market_aliases_and_split_records() -> None:
     assert actual["IR"] == [1.0, 2.0, 30.0, 40.0]
     assert splits["IR"] == [(date(2020, 2, 28), 2.0), (date(2020, 3, 3), 3.0)]
     assert actual["OLD"] == [5.0] * 4 and "OLD" in known
+    gone = {"GPS": [7.0], "GAP": [7.0]}
+    gone_splits: dict[str, list[tuple[date, float]]] = {"GAP": [(date(2020, 1, 2), 2.0)]}
+    gone_known = {"GAP"}
+    fu.apply_aliases_market(gone, gone_splits, gone_known, days[:1], {"GPS": "GAP"})
+    assert "GPS" in gone_known and gone_splits["GPS"] == gone_splits["GAP"]
     rows = merge_checked([("A", date(2026, 1, 1), 0), ("B", date(2026, 1, 1), 1)], {"B": 2},
                          date(2026, 10, 1))  # fmt: skip
     assert rows == [("A", date(2026, 1, 1), 0), ("B", date(2026, 10, 1), 2)]
