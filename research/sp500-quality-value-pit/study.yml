@@ -1,0 +1,78 @@
+# 预先登记（2026-10-01，在计算任何因子值或收益之前写定）。改参数 = 新版本研究。
+schema_version: 1
+kind: cross_section
+name: sp500_quality_value_pit
+status: registered
+registered_at: 2026-10-01
+question: >
+  在标普 500 时点成分股（不含金融股）中，按“质量 + 价值”综合排名买入前 50 只、等权、每月调仓，
+  扣除成本后能否跑赢同一股票池的等权组合？
+hypothesis: >
+  高盈利（Novy-Marx 2013；Fama-French 2015 RMW）与便宜（Fama-French 1992 HML）各自有溢价，
+  两者负相关、组合后更稳（Asness, Frazzini, Pedersen 2019 “Quality Minus Junk”）。
+  主检验：相对同池等权组合，月均超额收益的 95% 置信区间下限 > 0。
+universe:
+  membership: meta/sp500_history
+  prices: [daily, daily_delisted]
+  start: 2012-01-01                       # 价格覆盖率首次 ≥90%；财报数据 2009 起，需一整年年报
+  end: 2025-12-31
+  min_history_days: 253
+  exclude_sic: [6000, 6999]               # 金融（银行、保险、券商、REIT）：资产负债表口径不可比
+fundamentals:
+  source: sec_fsds                        # SEC 财报数据集；CIK 来自 meta/ticker_cik（内部人申报匹配）
+  statements: annual                      # 10-K/10-K/A/10-KT：qtrs=4 的流量、ddate=期末的存量
+  known_by: filed <= signal_day           # 只用信号日当天或之前已经提交的报表
+  max_age_days: 550                       # 年报期末距信号日超过 18 个月视为缺失
+  report_choice: >
+    已知年报中取期末（period）最新的一期；同一期有修订（10-K/A）时，每个项目从提交日最新、
+    且含该项目的那份取值；项目内按下列标签顺序取第一个有值的
+  net_income: [NetIncomeLoss, ProfitLoss, NetIncomeLossAvailableToCommonStockholdersBasic]
+  operating_cash_flow: [NetCashProvidedByUsedInOperatingActivities]
+  assets: [Assets]
+  equity: [StockholdersEquity, StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest]
+  shares: [WeightedAverageNumberOfDilutedSharesOutstanding, WeightedAverageNumberOfSharesOutstandingBasic]
+  market_value: >
+    信号日收盘价换算为当日实际股价（不做分红调整；雅虎收盘价按其后全部拆股还原，Tiingo 本身即原始价）
+    × 年报加权稀释股数 × 年报提交日之后、信号日及之前的拆股比例（提交前发生的拆股，按会计准则
+    财报已追溯调整）。拆股记录未核实（splits_checked 中没有、也非 Tiingo 来源）的股票不计市值类指标
+  sic_exclusion: 所选年报的 SIC 在 exclude_sic 区间内即剔除；SIC 缺失不剔除
+signal:
+  name: quality_value
+  quality: [roa, cfoa]                    # 净利润/总资产，经营现金流/总资产
+  value: [earnings_yield, book_to_market, cash_flow_yield]   # 净利润/市值，净资产/市值，经营现金流/市值
+  combine: >
+    候选 = 当月有价格、满 min_history_days、非金融、有可用年报的成员。每个指标在“该指标有值的候选”中
+    取百分位 (平均名次 - 1) / (n - 1)，越高越好（总资产 ≤0 不计 ROA/CFOA，市值 ≤0 不计价值类，
+    净资产 ≤0 不计 B/M）；质量 = 已有项平均（至少 1 项），价值 = 已有项平均（至少 2 项）；
+    综合 = 0.5 质量 + 0.5 价值，降序取前 top_n，同分按代码排序。满足两项最少数的才算合格股票
+selection:
+  top_n: 50
+  weighting: equal
+rebalance: monthly
+execution_lag_days: 1
+transaction_cost_bps: 10
+delisting:
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe          # 同一合格股票池（同样排除金融、同样要求有财报）的等权组合
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261001
+success_criteria:
+  - 相对等权股票池的月均超额收益，95% 置信区间下限 > 0
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验）
+  - 最差滚动 12 个月亏损不超过本金的 25%
+  - 价格覆盖率每个调仓日 ≥ 90%；财报覆盖率（有价格、满历史、未确认为金融股的成员中，合格者占比）每个调仓日 ≥ 85%
+limitations:
+  - 2012–2025 不含 2008 年那样的危机，回撤与 25% 约束的结论外推性有限
+  - SEC 2024-12 重处理后只含三大报表，流通股数用加权稀释股数近似
+  - 前成分股中雅虎来源者的拆股记录需另行下载；缺失时该股当月不计市值类指标
+  - 年报更新慢（最长约 15 个月），信号比用季报的研究更“旧”
+  - 双重股权（GOOGL/GOOG、FOX/FOXA、NWS/NWSA 等）两个代码共用同一 CIK 的财报，可能同时入选；
+    市值用单一类别股价 × 全部类别股数近似
+human_review:
+  approved: false

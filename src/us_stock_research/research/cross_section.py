@@ -34,7 +34,7 @@ from us_stock_research.research.trials import record_and_assess
 from us_stock_research.tables import TableStore
 
 MAX_STALE_DAYS = 5  # a signal price may come from up to 5 trading days earlier (halts, holidays)
-SIGNALS = ("momentum_12_1", "low_volatility")
+SIGNALS = ("momentum_12_1", "low_volatility", "quality_value")
 REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "inference")
 
 
