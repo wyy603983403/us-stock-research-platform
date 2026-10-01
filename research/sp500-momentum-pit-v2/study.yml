@@ -1,0 +1,57 @@
+# 第 2 版预先登记（2026-10-01，在看到 v1 或本版任何收益结果之前写定）。
+# 唯一改动：起始日 2001-01-01 → 2012-01-01。原因只与数据有关：免费数据补不齐 2001–2011 年
+# 被收购公司的价格（Tiingo 对被别家沿用代码的退市公司不提供历史价格），这些年份的时点成分股价格
+# 覆盖率为 62%–88%，低于本方案要求的 90%；2012 年起覆盖率 ≥90%。v1 照原样运行并报告。
+schema_version: 1
+kind: cross_section
+name: sp500_momentum_pit_v2
+status: registered
+registered_at: 2026-10-01
+supersedes: sp500_momentum_pit  # 仅起始日不同，其余参数完全相同
+question: >
+  在去掉幸存者偏差的标普 500 历史成分股中，按过去 12 个月（剔除最近 1 个月）涨幅买入最强的 50 只、
+  每月调仓，扣除成本后能否跑赢同一股票池的等权组合？
+hypothesis: >
+  横截面动量（Jegadeesh-Titman 1993；Asness 等 2013）在美国大盘股中仍然存在：
+  相对等权成分股组合，月均超额收益的 95% 置信区间下限为正。
+universe:
+  membership: meta/sp500_history          # fja05680/sp500，按月末时点取当时成分股
+  prices: [daily, daily_delisted]         # 雅虎日线 + 前成分股日线（雅虎/Tiingo）
+  start: 2012-01-01                       # 时点成分股价格覆盖率首次 ≥90% 的年份
+  end: 2025-12-31
+  min_history_days: 273                   # 信号需要 252+21 个交易日的价格
+signal:
+  name: momentum_12_1
+  lookback_days: 252
+  skip_days: 21
+selection:
+  top_n: 50
+  weighting: equal
+rebalance: monthly                         # 月末最后一个交易日计算信号
+execution_lag_days: 1                      # 次日收盘成交
+transaction_cost_bps: 10                   # 每成交一美元的冲击与点差
+delisting:
+  # 持有期内价格序列提前结束（退市、并购）：按最后收盘价退出，其后持现金。
+  # 敏感性：对所有持有期内价格提前结束的情形额外扣 30%（Shumway 1997 的量级；无法区分并购与破产，偏保守）。
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe           # 同一股票池、同一资格条件的等权组合
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20260930
+success_criteria:
+  - 相对等权股票池的月均超额收益，95% 置信区间下限 > 0
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验）
+  - 最差滚动 12 个月亏损不超过本金的 25%（风险配置硬约束）
+  - 价格覆盖率：每个调仓日有价格的成分股占比 ≥ 90%；不足的年份单独报告
+limitations:
+  - 历史成分名单来自第三方整理（fja05680/sp500），2001 年以前可能缺成员
+  - 16 段成分期因代码被新公司复用而没有价格，按缺失处理
+  - 前成分股价格部分来自 Tiingo，与雅虎复权口径可能有细微差别
+  - 退市收益无法区分并购（通常为正）与破产（通常为大幅负），用两种假设报告
+human_review:
+  approved: false
