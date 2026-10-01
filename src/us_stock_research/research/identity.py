@@ -70,12 +70,15 @@ def build(
                 continue  # no prices at all: already unpriced
             eff = max(start, DATA_START)
             if first > eff + GRACE and (end is None or first < end):
-                # series begins inside the interval: block the part before it trades plus,
-                # when another company held the ticker then, the whole interval
-                other = latest_cik is not None and any(
-                    s[2] not in (None, latest_cik) for s in inside
+                # series begins inside the interval. When another company held the ticker
+                # first, block until today's company takes over (its first CIK segment),
+                # otherwise only until trading starts
+                handover = next(
+                    (seg[0] for seg in inside if latest_cik is not None and seg[2] == latest_cik),
+                    None,
                 )
-                stop = end if other else first
+                other = any(seg[2] not in (None, latest_cik) for seg in inside)
+                stop = handover if other and handover else (end if other else first)
                 out.append((sym, start, stop, f"stored prices start {first}"))
             # within-interval CIK change whose part the series cannot cover (IR in 2020)
             for seg_start, seg_end, cik, _name in inside:

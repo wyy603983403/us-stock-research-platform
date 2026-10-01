@@ -1359,6 +1359,14 @@ def test_identity_blocks_reused_tickers_and_dated_alias_splices() -> None:
     etn96 = [("ETN", d(1996, 1, 2), None)]
     etn_segs = {"ETN": [(d(1996, 1, 2), d(2012, 12, 1), 20, "E"), (d(2012, 12, 1), None, 21, "P")]}
     assert build(etn96, etn_segs, {"ETN": d(2000, 1, 3)}, set(), set()) == []  # pre-2000 start
+    fox = build(
+        [("FOXA", d(2004, 12, 20), None)],
+        {"FOXA": [(d(2004, 12, 20), d(2019, 3, 20), 1, "21CF"), (d(2019, 3, 20), None, 2, "FOX")]},
+        {"FOXA": d(2019, 3, 12)},
+        set(),
+        set(),
+    )
+    assert {(a, b) for _s, a, b, _r in fox} == {(d(2004, 12, 20), d(2019, 3, 20))}
     manual = [("CB", d(1996, 1, 2), d(2016, 1, 19), "reviewed")]
     assert build([], {}, {}, set(), set(), manual) == manual
     assert ("IR", date(2010, 11, 17)) in keys  # old IR part not covered by today's IR series
