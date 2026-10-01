@@ -40,5 +40,8 @@
     company facts 下载 966 个 CIK（885 有数据，81 个为 2009 年前已消失的公司）到 `parquet/sec_companyfacts/`
     （`usr-collect-fundamentals --all-ciks`）。财报覆盖率 ≥95%，独立实现逐月一致。结果未通过：相对等权
     −0.04%/月，最差 12 月 −32.1%；归因显示价值 +0.16、盈利 +0.26 暴露显著，但无 alpha。见 docs/results/sp500-quality-value-pit.md。
-16. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+16. 阶段 1 演练账本 `usr-rehearsal-fill`（2026-10-01）：订单按成交日收盘价模拟记账到 `portfolio/rehearsal/<研究>.yml`，
+    下月订单在模拟持仓上生成；每日更新脚本已接入，从 2026-09-30 的清单开始。2026-09-30 清单已独立重算一致（待用户本人复核）。
+17. 内部人买入研究（预先登记 5f8782b）：未通过，相对等权 −0.13%/月；见 docs/results/sp500-insider-buying-pit.md。试验登记 6 组。
+18. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
