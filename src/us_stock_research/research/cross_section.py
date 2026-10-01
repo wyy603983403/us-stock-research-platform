@@ -145,6 +145,7 @@ def run(
     haircut: float = 0.0,
     excluded: set[str] | None = None,
     benchmark_symbol: str = "SPY",
+    blocked: Blocked | None = None,
 ) -> dict[str, Any]:
     uni, sig, sel = contract["universe"], contract["signal"], contract["selection"]
     lag = int(contract["execution_lag_days"])
@@ -160,7 +161,13 @@ def run(
     for t, t_next in zip(ends, ends[1:], strict=False):
         day = prices.days[t]
         members = members_on(history, day)
-        priced = {s for s in members if s not in excluded and prices.at(s, t, MAX_STALE_DAYS)}
+        priced = {
+            s
+            for s in members
+            if s not in excluded
+            and not is_blocked(blocked, s, day)
+            and prices.at(s, t, MAX_STALE_DAYS)
+        }
         eligible: dict[str, float] = {}
         for s in sorted(priced):
             if prices.at(s, t - need, MAX_STALE_DAYS) is None:
@@ -280,13 +287,50 @@ def load_aliases(path: Path) -> dict[str, str]:
 
 
 def apply_aliases(prices: Prices, aliases: dict[str, str]) -> list[str]:
-    """Renamed tickers borrow the new ticker's history (same company); returns those applied."""
+    """Renamed tickers borrow the new ticker's history (same company); returns those applied.
+
+    ``OLD: NEW`` gives OLD the whole history of NEW. ``OLD@YYYY-MM-DD: NEW`` splices: before that
+    date OLD's prices are NEW's (the company that traded as OLD then trades as NEW today, e.g.
+    Ingersoll-Rand -> TT in 2020), from that date on OLD keeps its own series (the new holder).
+    """
     applied = []
-    for old, new in sorted(aliases.items()):
-        if old not in prices.series and new in prices.series:
-            prices.series[old] = prices.series[new]
-            applied.append(f"{old}->{new}")
+    for key, new in sorted(aliases.items()):
+        if new not in prices.series:
+            continue
+        old, _, cut = key.partition("@")
+        if not cut:
+            if old not in prices.series:
+                prices.series[old] = prices.series[new]
+                applied.append(f"{old}->{new}")
+            continue
+        until = date.fromisoformat(cut)
+        own = prices.series.get(old) or [None] * len(prices.days)
+        borrowed = prices.series[new]
+        prices.series[old] = [
+            b if d < until else o for d, b, o in zip(prices.days, borrowed, own, strict=True)
+        ]
+        applied.append(f"{old}->{new} before {cut}")
     return applied
+
+
+Blocked = dict[str, list[tuple[date, date | None]]]
+
+
+def is_blocked(blocked: Blocked | None, symbol: str, day: date) -> bool:
+    """Member on ``day`` but its stored prices belong to another company (see identity.py)."""
+    for start, end in (blocked or {}).get(symbol, ()):
+        if start <= day and (end is None or day < end):
+            return True
+    return False
+
+
+def load_blocked(tables: TableStore) -> Blocked:
+    if not tables.has("meta", "price_identity"):
+        return {}
+    out: Blocked = {}
+    for sym, start, end in tables.read("meta", "price_identity", "symbol, start_date, end_date"):
+        out.setdefault(sym, []).append((start, end))
+    return out
 
 
 def load_prices(tables: TableStore, start: date, end: date) -> Prices:
@@ -418,7 +462,13 @@ def validate_main(argv: list[str] | None = None) -> int:
         print(f"{args.reference} has no stored daily bars; download it first", file=sys.stderr)
         return 2
     quarantined = set(load_exceptions(args.exceptions)[1])
-    result = run(contract, prices, [tuple(r) for r in rows], excluded=quarantined)
+    result = run(
+        contract,
+        prices,
+        [tuple(r) for r in rows],
+        excluded=quarantined,
+        blocked=load_blocked(tables),
+    )
     # only the benchmark side is reported: the signal's results stay unseen until the real run
     report = compare_to_reference(
         result["months"],
@@ -456,9 +506,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     aliases_applied = apply_aliases(prices, load_aliases(args.aliases))
     quarantined = set(load_exceptions(args.exceptions)[1])
-    base = run(contract, prices, history, excluded=quarantined)
+    blocked = load_blocked(tables)
+    base = run(contract, prices, history, excluded=quarantined, blocked=blocked)
     haircut = float(contract.get("delisting", {}).get("haircut_sensitivity", 0.0))
-    stressed = run(contract, prices, history, haircut=haircut, excluded=quarantined)
+    stressed = run(
+        contract, prices, history, haircut=haircut, excluded=quarantined, blocked=blocked
+    )
     summary = summarize(contract, base)
     fingerprint = data_fingerprint(tables, ["daily", "daily_delisted", "meta"])
     artifact: dict[str, Any] = {
@@ -475,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
         "trading_enabled": False,
         "excluded_quarantined": sorted(quarantined),
         "ticker_aliases_applied": aliases_applied,
+        "identity_blocked_intervals": sum(len(v) for v in blocked.values()),
         "summary": summary,
         "haircut_sensitivity": {"haircut": haircut, "summary": summarize(contract, stressed)},
         "strategy_monthly_returns": [m["strategy"] for m in base["months"]],

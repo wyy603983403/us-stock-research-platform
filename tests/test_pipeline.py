@@ -1171,9 +1171,14 @@ def test_independent_cross_section_matches_engine() -> None:
         {"name": "low_volatility", "lookback_days": 252},
     ):
         c = dict(base, signal=sig)
+        span = (date(2019, 6, 1), date(2020, 6, 1))
         for cut in (0.0, -0.3):
-            a = xs.run(c, prices, history, haircut=cut, excluded={"S5"})["months"]
-            b = vx.backtest(c, as_dicts, history, haircut=cut, excluded={"S5"})
+            a = xs.run(c, prices, history, haircut=cut, excluded={"S5"}, blocked={"S2": [span]})[
+                "months"
+            ]
+            b = vx.backtest(
+                c, as_dicts, history, haircut=cut, excluded={"S5"}, blocked=[("S2", *span)]
+            )
             result = vx.compare(a, b)
             assert result["match"], (sig["name"], cut, result)
 
@@ -1310,3 +1315,53 @@ def test_cik_map_picks_the_company_using_the_ticker_during_membership() -> None:
     assert got[("ECHO", date(2026, 6, 24))] == (6006, "recent-alias:SATS")  # not the old ECHO
     assert got[("FRC", date(2019, 1, 2))] == (None, "override:no_sec_filer")
     assert stats["before_since"] == 1
+
+
+def test_identity_blocks_reused_tickers_and_dated_alias_splices() -> None:
+    from us_stock_research.research import cross_section as xs
+    from us_stock_research.research.identity import build
+
+    history = [
+        ("TT", date(2002, 5, 13), date(2008, 6, 6)),  # American Standard / Trane Inc.
+        ("TT", date(2020, 3, 3), None),  # Trane Technologies (ex Ingersoll-Rand)
+        ("RIG", date(1999, 12, 31), date(2008, 12, 19)),
+        ("RIG", date(2010, 1, 1), None),
+        ("CNC", date(1997, 1, 15), date(2002, 7, 25)),  # Conseco; Centene trades from 2001-12
+        ("CNC", date(2016, 3, 30), None),
+        ("ETN", date(2000, 1, 1), None),  # re-domiciled 2012: two CIKs, one continuous series
+        ("IR", date(2010, 11, 17), None),
+    ]
+    segments = {
+        "TT": [
+            (date(2002, 5, 13), date(2008, 6, 6), 1, "TRANE INC"),
+            (date(2020, 3, 3), None, 2, "TT"),
+        ],
+        "RIG": [(date(2006, 1, 1), date(2008, 12, 19), 10, "A"), (date(2010, 1, 1), None, 11, "B")],
+        "ETN": [
+            (date(2000, 1, 1), date(2012, 12, 1), 20, "EATON"),
+            (date(2012, 12, 1), None, 21, "PLC"),
+        ],
+        "IR": [
+            (date(2010, 11, 17), date(2020, 3, 2), 30, "OLD"),
+            (date(2020, 3, 2), None, 31, "NEW"),
+        ],
+    }
+    first = {"TT": date(2000, 1, 3), "RIG": date(2000, 1, 3), "CNC": date(2001, 12, 13)}
+    first |= {"ETN": date(2000, 1, 3), "IR": date(2017, 5, 12)}
+    blocked = build(history, segments, first, {"RIG@1999-12-31"}, set())
+    keys = {(s, a) for s, a, _b, _r in blocked}
+    assert ("TT", date(2002, 5, 13)) in keys  # different CIK than today's TT
+    assert ("RIG", date(1999, 12, 31)) not in keys  # reviewed: same company
+    assert ("CNC", date(1997, 1, 15)) in keys  # series starts mid-interval
+    assert not any(s == "ETN" for s, *_ in blocked)  # reorganisation, continuous series
+    assert ("IR", date(2010, 11, 17)) in keys  # old IR part not covered by today's IR series
+    assert not any(s == "IR" for s, *_ in build(history, segments, first, set(), {"IR"}))
+
+    days = [date(2020, 2, 27), date(2020, 2, 28), date(2020, 3, 2), date(2020, 3, 3)]
+    prices = xs.Prices(days, {"TT": [1.0, 2.0, 3.0, 4.0], "IR": [None, 9.0, 9.5, 10.0]})
+    xs.apply_aliases(prices, {"IR@2020-03-02": "TT"})
+    assert prices.series["IR"] == [1.0, 2.0, 9.5, 10.0]
+    assert xs.is_blocked({"TT": [(date(2002, 5, 13), date(2008, 6, 6))]}, "TT", date(2005, 1, 3))
+    assert not xs.is_blocked(
+        {"TT": [(date(2002, 5, 13), date(2008, 6, 6))]}, "TT", date(2021, 1, 4)
+    )

@@ -109,6 +109,7 @@ def backtest(
     history: list[tuple[str, date, date | None]],
     haircut: float = 0.0,
     excluded: set[str] | None = None,
+    blocked: list[tuple[str, date, date | None]] | None = None,
 ) -> list[dict[str, Any]]:
     uni = contract["universe"]
     series = {s: Series(p) for s, p in prices.items() if p}
@@ -132,8 +133,9 @@ def backtest(
     for d, d_next in zip(rebal, rebal[1:], strict=False):
         i = pos[d]
         members = {s for s, a, b in history if a <= d and (b is None or d < b)}
+        wrong_company = {s for s, a, b in blocked or [] if a <= d and (b is None or d < b)}
         scores = {}
-        for s in members - excluded:
+        for s in members - excluded - wrong_company:
             ser = series.get(s)
             if price_near(ser, cal, i, STALE) is None:
                 continue
@@ -211,10 +213,16 @@ def main(argv: list[str] | None = None) -> int:
         s: {d: v for d, v in zip(loaded.days, vals, strict=True) if v is not None}
         for s, vals in loaded.series.items()
     }
+    blocked_map = xs.load_blocked(tables)
+    blocked_list = [(s, a, b) for s, spans in blocked_map.items() for a, b in spans]
     report = {}
     for label, cut in (("base", 0.0), ("haircut", haircut)):
-        engine = xs.run(contract, loaded, history, haircut=cut, excluded=quarantined)["months"]
-        independent = backtest(contract, as_dicts, history, haircut=cut, excluded=quarantined)
+        engine = xs.run(
+            contract, loaded, history, haircut=cut, excluded=quarantined, blocked=blocked_map
+        )["months"]
+        independent = backtest(
+            contract, as_dicts, history, haircut=cut, excluded=quarantined, blocked=blocked_list
+        )
         report[label] = compare(engine, independent)
     print(json.dumps(report, indent=2))
     return 0 if all(r.get("match") for r in report.values()) else 1

@@ -27,3 +27,7 @@ aliases:
   MMC: MRSH     # 2026 Marsh & McLennan 改代码（推断）
   BK: BNY       # 2026 Bank of New York Mellon 改代码（推断）
   SATS: ECHO    # 2026 EchoStar 改代码（推断）
+  GPS: GAP      # 2024 Gap Inc. 改代码
+  CTL: LUMN     # 2020 CenturyLink 更名 Lumen
+  EQR: VMRK     # 2026 Equity Residential 改代码（推断：VMRK 价格历史从 2000 年起连续）
+  "IR@2020-03-02": TT   # 2020-03-02 以前的 IR 是 Ingersoll-Rand plc（今 Trane Technologies, TT）；之后 IR 归 Gardner Denver

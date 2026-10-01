@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from us_stock_research.bars import DailyBar
 from us_stock_research.calendar import trading_days
@@ -309,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delisted", action="store_true", help="fetch former members (Tiingo)")
     parser.add_argument("--pause", type=float, default=1.0)
     parser.add_argument("--wait-minutes", type=float, default=61)
+    parser.add_argument(
+        "--retry", action="store_true", help="also retry tickers an earlier run did not find"
+    )
+    parser.add_argument("--aliases", type=Path, default=Path("configs/ticker_aliases.yml"))
     parser.add_argument("--max-waits", type=int, default=14)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
@@ -363,8 +368,12 @@ def main(argv: list[str] | None = None) -> int:
             print("put TIINGO_TOKEN=<token> in .env first", file=sys.stderr)
             return 2
         targets = [(s, max(a, args.since), b) for s, a, b in missing]
+        aliases: dict[str, str] = {}
+        if args.aliases.exists():
+            raw_aliases = (yaml.safe_load(args.aliases.read_text()) or {}).get("aliases") or {}
+            aliases = {str(k): str(v) for k, v in raw_aliases.items() if "@" not in str(k)}
         skip: dict[str, str] = {}
-        if tables.has("meta", "sp500_coverage"):
+        if tables.has("meta", "sp500_coverage") and not args.retry:
             for sym, status in tables.read("meta", "sp500_coverage", "symbol, status"):
                 if status in ("not_found", "rejected_window"):
                     skip[sym] = status
@@ -377,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
                 tables,
                 [
                     ("yahoo", lambda s: yahoo_rows(yahoo, s)),
+                    # renamed but still trading: Yahoo keeps the history under the new ticker
+                    (
+                        "yahoo-alias",
+                        lambda s: yahoo_rows(yahoo, aliases[s]) if s in aliases else [],
+                    ),
                     ("tiingo", lambda s: fetch_tiingo_daily(client, s, token)),
                 ],
                 today,
