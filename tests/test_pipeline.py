@@ -1816,3 +1816,40 @@ def test_leveraged_trend_engine_matches_independent() -> None:
         etf[d] = v
     check = lt.validate_leverage_model(days, prices, yields, etf, 2.0)
     assert abs(check["annualized_diff"]) < 1e-12 and check["tracking_error"] < 1e-12
+
+
+def test_leveraged_trend_daily_intent() -> None:
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.trading.lt_intent import generate, trend_on
+    from us_stock_research.trading.order_intent import Holdings
+
+    assert trend_on([1.0] * 199 + [2.0], 200) and not trend_on([2.0] * 199 + [1.0], 200)
+    days = trading_days(date(2025, 1, 2), date(2026, 3, 31))
+
+    def series(f):  # type: ignore[no-untyped-def]
+        return [DailyBar(d, f(i), f(i), f(i), f(i), f(i), 1000) for i, d in enumerate(days)]
+
+    up = {"SPY": series(lambda i: 100 + i * 0.1), "SSO": series(lambda i: 50 + i * 0.1),
+          "BIL": series(lambda i: 91.0)}  # fmt: skip
+    c = {"name": "lt", "status": "registered", "data": {"signal_and_asset": "SPY"},
+         "rule": {"sma_days": 200}}  # fmt: skip
+    cash = Holdings(cash_usd=100_000.0, peak_nav_usd=100_000.0)
+    it = generate(c, up, cash, days[-1], risk_on="SSO", risk_off="BIL")
+    assert it["signal"]["trend_on"] and it["mode"] == "rehearsal" and not it["reduce_only"]
+    assert [(o["side"], o["symbol"]) for o in it["orders"]] == [("BUY", "SSO")]
+    held = Holdings(cash_usd=0.0, positions={"SSO": 1000.0}, peak_nav_usd=85_000.0)
+    down = dict(up, SPY=series(lambda i: 200 - i * 0.1))
+    it2 = generate(c, down, held, days[-1], risk_on="SSO", risk_off="BIL")
+    assert not it2["signal"]["trend_on"]
+    assert [(o["side"], o["symbol"]) for o in it2["orders"]] == [("SELL", "SSO"), ("BUY", "BIL")]
+    # stale data: reduce-only, so the switch is a sale only
+    stale = dict(down, BIL=series(lambda i: 91.0)[:-3])
+    it3 = generate(c, stale, held, days[-1], risk_on="SSO", risk_off="BIL")
+    assert it3["reduce_only"] and [o["side"] for o in it3["orders"]] == ["SELL"]
+    # 15% below the peak: the breaker allows the sale but not the T-bill purchase
+    deep = Holdings(cash_usd=0.0, positions={"SSO": 1000.0}, peak_nav_usd=1e5)
+    it4 = generate(c, down, deep, days[-1], risk_on="SSO", risk_off="BIL")
+    assert it4["reduce_only"] and "circuit breaker" in it4["reduce_only_reasons"][0]
+    # already on target: nothing to do
+    on_target = Holdings(cash_usd=10.0, positions={"SSO": 1000.0}, peak_nav_usd=1e5)
+    assert generate(c, up, on_target, days[-1], risk_on="SSO", risk_off="BIL")["orders"] == []

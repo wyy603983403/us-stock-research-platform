@@ -6,6 +6,7 @@
 #   4 每周一：拆股记录、Fama-French 因子
 #   5 质量门禁 + 数据目录
 #   6 每月最后一个交易日之后：趋势基线订单意向演练（只写文件，不下单）
+#   7 每个交易日：SPY 均线 + 2 倍杠杆演练（信号变化才出订单；先记账再出单）
 # 任何一步失败都不影响后面各步；汇总见 logs/daily_update.log。
 #   bash scripts/mac_daily_update.sh            # 更新全部
 #   bash scripts/mac_daily_update.sh --dry-run  # 只看日线会做什么，不写入（其余步骤跳过）
@@ -82,4 +83,15 @@ if [ -n "$ASOF" ] && [ ! -f "orders/etf_trend_baseline/${ASOF}.json" ]; then
   .venv/bin/usr-order-intent --contract research/etf-trend-baseline/study.yml --as-of "$ASOF" $HOLD \
     | tail -n 3 || echo "  生成失败"
 fi
+# 每个交易日：SPY 200 日均线 + 2 倍杠杆的演练（先按今天收盘记昨天的订单，再按今天收盘出新订单）
+LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime
+from us_stock_research.quality.intraday import last_closed_session
+print(last_closed_session(datetime.now(UTC)).isoformat())")
+echo "== 杠杆趋势演练（${LASTDAY}，只写文件）"
+.venv/bin/usr-rehearsal-fill --study spy_trend_leverage_2x --cost-bps 10 2>&1 | tail -n 3 \
+  || echo "  演练记账失败"
+LT_LEDGER=portfolio/rehearsal/spy_trend_leverage_2x.yml
+LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
+.venv/bin/usr-lt-intent --contract research/spy-trend-leverage-2x/study.yml --as-of "$LASTDAY" \
+  $LT_HOLD 2>&1 | tail -n 1 || echo "  生成失败"
 echo "完成 $(date '+%Y-%m-%d %H:%M')"
