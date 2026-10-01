@@ -19,6 +19,7 @@ import json
 import math
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -35,6 +36,8 @@ from us_stock_research.tables import TableStore
 
 MAX_STALE_DAYS = 5  # a signal price may come from up to 5 trading days earlier (halts, holidays)
 SIGNALS = ("momentum_12_1", "low_volatility", "quality_value")
+CROSS_SECTIONAL = ("quality_value",)  # scored from fundamentals over the whole cross-section
+Scorer = Callable[[list[str], int], tuple[dict[str, float], dict[str, int]]]
 REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "inference")
 
 
@@ -47,6 +50,8 @@ def load_xs_contract(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} lacks {missing}")
     if raw["signal"]["name"] not in SIGNALS:
         raise ValueError(f"unknown signal {raw['signal']['name']!r}; known: {SIGNALS}")
+    if raw["signal"]["name"] in CROSS_SECTIONAL and "fundamentals" not in raw:
+        raise ValueError(f"{path}: signal {raw['signal']['name']} needs a fundamentals block")
     for key in ("start", "end"):
         value = raw["universe"][key]
         raw["universe"][key] = value if isinstance(value, date) else date.fromisoformat(value)
@@ -146,7 +151,9 @@ def run(
     excluded: set[str] | None = None,
     benchmark_symbol: str = "SPY",
     blocked: Blocked | None = None,
+    scorer: Scorer | None = None,
 ) -> dict[str, Any]:
+    """``scorer`` scores a whole cross-section at once (``quality_value``); price signals don't."""
     uni, sig, sel = contract["universe"], contract["signal"], contract["selection"]
     lag = int(contract["execution_lag_days"])
     bps = float(contract.get("transaction_cost_bps", 0.0))
@@ -169,12 +176,17 @@ def run(
             and prices.at(s, t, MAX_STALE_DAYS)
         }
         eligible: dict[str, float] = {}
-        for s in sorted(priced):
-            if prices.at(s, t - need, MAX_STALE_DAYS) is None:
-                continue
-            v = signal_value(prices, s, t, sig)
-            if v is not None:
-                eligible[s] = v
+        candidates = [s for s in sorted(priced) if prices.at(s, t - need, MAX_STALE_DAYS)]
+        stats: dict[str, int] = {}
+        if sig["name"] in CROSS_SECTIONAL:
+            if scorer is None:
+                raise ValueError(f"signal {sig['name']} needs a scorer")
+            eligible, stats = scorer(candidates, t)
+        else:
+            for s in candidates:
+                v = signal_value(prices, s, t, sig)
+                if v is not None:
+                    eligible[s] = v
         ranked = sorted(
             eligible, key=lambda s: (eligible[s] if lower_is_better else -eligible[s], s)
         )
@@ -212,6 +224,7 @@ def run(
                 "turnover_one_way": turnover,
                 "early_exits": int(delisted),
                 "top": picks[:10],
+                **({"fundamentals": stats} if stats else {}),
             }
         )
     return {"months": months}
@@ -256,7 +269,15 @@ def summarize(contract: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
     for m in months:
         by_year.setdefault(m["date"][:4], []).append(m["coverage"])
     bench = [m["benchmark"] for m in months if m["benchmark"] is not None]
+    extra: dict[str, Any] = {}
+    fund = [m["fundamentals"] for m in months if "fundamentals" in m]
+    if fund:
+        cov = [fundamentals_coverage(f) for f in fund]
+        extra["fundamentals_coverage_min"] = min(cov)
+        extra["fundamentals_coverage_mean"] = sum(cov) / len(cov)
+        extra["eligible_min"] = min(f["scored"] for f in fund)
     return {
+        **extra,
         "strategy": monthly_metrics(strat),
         "equal_weight_universe": monthly_metrics(ew),
         "spy": monthly_metrics(bench) if len(bench) == len(months) else None,
@@ -266,6 +287,12 @@ def summarize(contract: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
         "coverage_min": min(m["coverage"] for m in months),
         "coverage_by_year": {y: round(sum(v) / len(v), 4) for y, v in sorted(by_year.items())},
     }
+
+
+def fundamentals_coverage(stats: dict[str, int]) -> float:
+    """Scored share of the priced, long-enough members not known to be financials."""
+    base = stats["candidates"] - stats["financial"]
+    return stats["scored"] / base if base else 0.0
 
 
 def data_fingerprint(tables: TableStore, kinds: list[str]) -> str:
@@ -360,6 +387,22 @@ def load_prices(tables: TableStore, start: date, end: date) -> Prices:
     return Prices(days=days, series=series)
 
 
+def build_scorer(
+    contract: dict[str, Any], tables: TableStore, prices: Prices, aliases: dict[str, str]
+) -> tuple[Scorer | None, str | None]:
+    """The fundamentals scorer for ``quality_value`` contracts and the id of its input rows."""
+    if contract["signal"]["name"] not in CROSS_SECTIONAL:
+        return None, None
+    from us_stock_research.research import fundamentals as fu
+
+    reports, fund_id = fu.load_reports(tables, fu.tag_lists(contract["fundamentals"]))
+    actual, splits, known = fu.load_market_inputs(tables, prices.days, aliases)
+    scorer = fu.QualityValue(
+        contract, prices.days, reports, fu.load_segments(tables), actual, splits, known
+    )
+    return scorer, fund_id
+
+
 def _git_sha() -> str | None:
     try:
         out = subprocess.run(
@@ -383,6 +426,9 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
         fails.append(f"最差滚动 12 个月 {worst:.1%}，超过 25% 亏损上限")
     if summary["coverage_min"] < 0.9:
         fails.append(f"最低价格覆盖率 {summary['coverage_min']:.1%} < 90%")
+    fund = summary.get("fundamentals_coverage_min")
+    if fund is not None and fund < 0.85:
+        fails.append(f"最低财报覆盖率 {fund:.1%} < 85%")
     return fails
 
 
@@ -507,13 +553,26 @@ def main(argv: list[str] | None = None) -> int:
     aliases_applied = apply_aliases(prices, load_aliases(args.aliases))
     quarantined = set(load_exceptions(args.exceptions)[1])
     blocked = load_blocked(tables)
-    base = run(contract, prices, history, excluded=quarantined, blocked=blocked)
+    scorer, fund_id = build_scorer(contract, tables, prices, load_aliases(args.aliases))
+    base = run(contract, prices, history, excluded=quarantined, blocked=blocked, scorer=scorer)
     haircut = float(contract.get("delisting", {}).get("haircut_sensitivity", 0.0))
     stressed = run(
-        contract, prices, history, haircut=haircut, excluded=quarantined, blocked=blocked
+        contract,
+        prices,
+        history,
+        haircut=haircut,
+        excluded=quarantined,
+        blocked=blocked,
+        scorer=scorer,
     )
     summary = summarize(contract, base)
-    fingerprint = data_fingerprint(tables, ["daily", "daily_delisted", "meta"])
+    if fund_id is None:
+        fingerprint = data_fingerprint(tables, ["daily", "daily_delisted", "meta"])
+    else:
+        prices_id = data_fingerprint(tables, ["daily", "daily_delisted", "meta", "splits"])
+        fingerprint = (
+            "xsec-fund-v1:sha256:" + hashlib.sha256(f"{prices_id}|{fund_id}".encode()).hexdigest()
+        )
     artifact: dict[str, Any] = {
         "study": contract["name"],
         "strategy": f"xsec_{contract['signal']['name']}",

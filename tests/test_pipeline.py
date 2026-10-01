@@ -1411,3 +1411,173 @@ def test_parse_chart_keeps_first_bar_of_a_repeated_day() -> None:
     }
     bars = parse_chart(payload, allow_missing_adj=True)
     assert len(bars) == 1 and bars[0].close == 101.45
+
+
+QV_SPEC = {
+    "max_age_days": 550,
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+    "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities"],
+    "assets": ["Assets"],
+    "equity": ["StockholdersEquity"],
+    "shares": [
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+    ],
+}
+QV_SIGNAL = {
+    "name": "quality_value",
+    "quality": ["roa", "cfoa"],
+    "value": ["earnings_yield", "book_to_market", "cash_flow_yield"],
+}
+
+
+def _annual(adsh, cik, sic, period, filed, ni, cfo, assets, equity, shares):  # type: ignore[no-untyped-def]
+    rows = [
+        (adsh, cik, sic, period, filed, "NetIncomeLoss", 4, "USD", ni),
+        (adsh, cik, sic, period, filed, "NetCashProvidedByUsedInOperatingActivities", 4, "USD",
+         cfo),
+        (adsh, cik, sic, period, filed, "Assets", 0, "USD", assets),
+        (adsh, cik, sic, period, filed, "StockholdersEquity", 0, "USD", equity),
+        (adsh, cik, sic, period, filed, "WeightedAverageNumberOfDilutedSharesOutstanding", 4,
+         "shares", shares),
+    ]  # fmt: skip
+    return [r for r in rows if r[-1] is not None]
+
+
+def test_point_in_time_annual_reports() -> None:
+    from us_stock_research.research import fundamentals as fu
+
+    tags = fu.tag_lists(QV_SPEC)
+    rows = _annual(
+        "A1", 7, 3571, date(2020, 12, 31), date(2021, 2, 20), 10.0, 12.0, 100.0, 50.0, 5.0
+    )
+    rows += _annual(
+        "A2", 7, 3571, date(2021, 12, 31), date(2022, 2, 25), 20.0, 25.0, 120.0, 60.0, 6.0
+    )
+    # amendment of 2021 restating only net income; a stray quarterly-length value is ignored
+    rows += [("A3", 7, 3571, date(2021, 12, 31), date(2022, 4, 1), "NetIncomeLoss", 4, "USD", 18.0)]
+    rows += [("A2", 7, 3571, date(2021, 12, 31), date(2022, 2, 25), "Assets", 4, "USD", 1.0)]
+    reports = fu.parse_rows(rows, tags)[7]
+    assert fu.resolve(reports, date(2021, 2, 19), tags, 550) is None  # nothing filed yet
+    got = fu.resolve(reports, date(2022, 1, 31), tags, 550)
+    assert got and got["period"] == date(2020, 12, 31) and got["net_income"] == 10.0
+    got = fu.resolve(reports, date(2022, 3, 31), tags, 550)
+    assert got and got["net_income"] == 20.0 and got["assets"] == 120.0
+    got = fu.resolve(reports, date(2022, 4, 29), tags, 550)
+    assert got and got["net_income"] == 18.0 and got["operating_cash_flow"] == 25.0
+    assert got["filed"] == date(2022, 2, 25)  # shares come from the original filing
+    assert fu.resolve(reports, date(2023, 7, 31), tags, 550) is None  # older than 550 days
+
+    # market value: Yahoo close is adjusted for a later 2:1 split; shares are pre-split
+    splits = [(date(2022, 6, 1), 2.0)]
+    assert fu.split_ratio(splits, date(2022, 2, 25), date(2022, 6, 30)) == 2.0
+    assert fu.split_ratio(splits, date(2022, 6, 1), None) == 1.0
+    days = [date(2022, 5, 31), date(2022, 6, 1)]
+    actual = fu.actual_prices({"X": [50.0, 51.0]}, days, {"X"}, {"X": splits})
+    assert actual["X"] == [100.0, 51.0]
+
+    ranks = fu.percentile_ranks({"a": 1.0, "b": 2.0, "c": 2.0, "d": 3.0})
+    assert ranks == {"a": 0.0, "b": 0.5, "c": 0.5, "d": 1.0}
+    per = {
+        "a": {"roa": 0.1, "cfoa": None, "earnings_yield": 0.05, "book_to_market": None,
+              "cash_flow_yield": 0.06},
+        "b": {"roa": 0.2, "cfoa": 0.3, "earnings_yield": 0.01, "book_to_market": None,
+              "cash_flow_yield": None},  # one value metric only: not scored
+        "c": {"roa": None, "cfoa": None, "earnings_yield": 0.02, "book_to_market": 0.5,
+              "cash_flow_yield": 0.03},  # no quality metric: not scored
+    }  # fmt: skip
+    assert set(fu.combine(per, QV_SIGNAL)) == {"a"}
+    assert fu.metrics({"net_income": 1.0, "assets": -1.0, "equity": -2.0}, 10.0) == {
+        "roa": None, "cfoa": None, "earnings_yield": 0.1, "book_to_market": None,
+        "cash_flow_yield": None,
+    }  # fmt: skip
+
+
+def test_market_aliases_and_split_records() -> None:
+    from us_stock_research.collectors.splits import merge_checked
+    from us_stock_research.research import fundamentals as fu
+
+    days = [date(2020, 2, 27), date(2020, 2, 28), date(2020, 3, 2), date(2020, 3, 3)]
+    actual = {"TT": [1.0, 2.0, 3.0, 4.0], "IR": [None, None, 30.0, 40.0], "NEW": [5.0] * 4}
+    splits = {"TT": [(date(2020, 2, 28), 2.0)], "IR": [(date(2020, 3, 3), 3.0)], "NEW": []}
+    known = {"TT", "IR", "NEW"}
+    fu.apply_aliases_market(actual, splits, known, days, {"IR@2020-03-02": "TT", "OLD": "NEW"})
+    assert actual["IR"] == [1.0, 2.0, 30.0, 40.0]
+    assert splits["IR"] == [(date(2020, 2, 28), 2.0), (date(2020, 3, 3), 3.0)]
+    assert actual["OLD"] == [5.0] * 4 and "OLD" in known
+    rows = merge_checked([("A", date(2026, 1, 1), 0), ("B", date(2026, 1, 1), 1)], {"B": 2},
+                         date(2026, 10, 1))  # fmt: skip
+    assert rows == [("A", date(2026, 1, 1), 0), ("B", date(2026, 10, 1), 2)]
+
+
+def test_quality_value_engine_matches_independent() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import cross_section as xs
+    from us_stock_research.research import fundamentals as fu
+    from us_stock_research.research import verify_xsec as vx
+
+    rng = random.Random(11)
+    days = trading_days(date(2017, 1, 3), date(2021, 6, 30))
+    series: dict[str, list[float | None]] = {}
+    rows: list[tuple] = []  # type: ignore[type-arg]
+    segments: dict[str, list[tuple[date, date | None, int | None]]] = {}
+    for k in range(16):
+        p, out = 30.0 + k, []
+        for _ in days:
+            p *= 1 + rng.gauss(0.0003, 0.015)
+            out.append(None if rng.random() < 0.01 else p)
+        sym = f"S{k}"
+        series[sym] = out
+        cik = 100 + k
+        segments[sym] = [(date(2000, 1, 1), None, cik if k != 15 else None)]
+        sic = 6021 if k == 3 else 2000 + k  # S3 is a bank
+        for year in range(2016, 2021):
+            if k == 7 and year == 2018:
+                continue  # missing a year: becomes too old during 2019-2020
+            assets = rng.uniform(50, 150)
+            ni = rng.choice([None, rng.uniform(-5, 15)]) if k == 9 else rng.uniform(-5, 15)
+            equity = rng.uniform(-10, 60) if k % 5 == 0 else rng.uniform(10, 60)
+            filed = date(year + 1, 2, 10 + k)
+            rows += _annual(f"{k}-{year}", cik, sic, date(year, 12, 31), filed, ni,
+                            rng.uniform(-3, 20), assets, equity, rng.uniform(1, 3))  # fmt: skip
+            if k == 4:  # an amendment restating net income two months later
+                rows += [(f"{k}-{year}A", cik, sic, date(year, 12, 31), date(year + 1, 4, 20),
+                          "NetIncomeLoss", 4, "USD", rng.uniform(0, 10))]  # fmt: skip
+    prices = xs.Prices(days, series)
+    actual = {s: [v * 10 if v else v for v in vals] for s, vals in series.items()}
+    splits = {"S2": [(date(2019, 5, 1), 2.0)], "S6": [(date(2020, 3, 10), 3.0)]}
+    known = {f"S{k}" for k in range(16)} - {"S8"}  # S8: splits never checked
+    history = [(f"S{k}", date(2015, 1, 1), None) for k in range(16)]
+    c = {
+        "name": "qv",
+        "universe": {"start": date(2018, 3, 1), "end": date(2021, 5, 31), "min_history_days": 253,
+                     "exclude_sic": [6000, 6999]},
+        "fundamentals": QV_SPEC,
+        "signal": QV_SIGNAL,
+        "selection": {"top_n": 4},
+        "execution_lag_days": 1,
+        "transaction_cost_bps": 10,
+    }  # fmt: skip
+    tags = fu.tag_lists(QV_SPEC)
+    scorer = fu.QualityValue(c, days, fu.parse_rows(rows, tags), segments, actual, splits, known)
+    independent = vx.Fundamentals(
+        c,
+        rows,
+        segments,
+        {s: {d: v for d, v in zip(days, vals, strict=True) if v} for s, vals in actual.items()},
+        splits,
+        known,
+    )
+    as_dicts = {
+        s: {d: v for d, v in zip(days, vals, strict=True) if v} for s, vals in series.items()
+    }
+    a = xs.run(c, prices, history, excluded={"S5"}, scorer=scorer)["months"]
+    b = vx.backtest(c, as_dicts, history, excluded={"S5"}, fundamentals=independent)
+    result = vx.compare(a, b)
+    assert result["match"], result
+    stats = a[-1]["fundamentals"]
+    assert stats["financial"] == 1 and 8 <= stats["scored"] <= 13
+    assert all("S3" not in m["top"] for m in a)
+    assert xs.fundamentals_coverage(stats) == stats["scored"] / (stats["candidates"] - 1)

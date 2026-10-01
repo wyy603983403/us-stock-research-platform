@@ -76,6 +76,139 @@ def signal(series: Series, cal: list[date], pos: int, spec: dict[str, Any]) -> f
     return math.sqrt(sum((r - m) ** 2 for r in rets) / (len(rets) - 1))
 
 
+class Fundamentals:
+    """Independent quality+value scoring from raw FSDS rows (no code shared with fundamentals.py).
+
+    ``rows``: ``adsh, cik, sic, period, filed, tag, qtrs, uom, value`` of annual reports dated at
+    their period end. ``segments``: ticker -> [(start, end, cik)]. ``actual``: the day's actual
+    close per ticker. ``splits``: ticker -> [(day, ratio)]. ``known``: tickers with known splits.
+    """
+
+    FLOWS = ("net_income", "operating_cash_flow", "shares")
+
+    def __init__(
+        self,
+        contract: dict[str, Any],
+        rows: list[tuple[Any, ...]],
+        segments: dict[str, list[tuple[date, date | None, int | None]]],
+        actual: dict[str, dict[date, float]],
+        splits: dict[str, list[tuple[date, float]]],
+        known: set[str],
+    ) -> None:
+        spec = contract["fundamentals"]
+        self.signal = contract["signal"]
+        self.max_age = timedelta(days=int(spec["max_age_days"]))
+        self.items = {
+            k: list(spec[k])
+            for k in ("net_income", "operating_cash_flow", "assets", "equity", "shares")
+        }
+        sic_ranges = list(contract["universe"].get("exclude_sic") or [])
+        self.sic_ranges = [(sic_ranges[k], sic_ranges[k + 1]) for k in range(0, len(sic_ranges), 2)]
+        # cik -> period -> list of (filed, adsh, sic, {tag: value})
+        self.by_cik: dict[int, dict[date, dict[str, tuple[date, Any, dict[str, float]]]]] = {}
+        for adsh, cik, sic, period, filed, tag, qtrs, uom, value in rows:
+            item = next((k for k, tags in self.items.items() if tag in tags), None)
+            if item is None or value is None:
+                continue
+            if qtrs != (4 if item in self.FLOWS else 0):
+                continue
+            if uom != ("shares" if item == "shares" else "USD"):
+                continue
+            filings = self.by_cik.setdefault(int(cik), {}).setdefault(period, {})
+            entry = filings.setdefault(adsh, (filed, sic, {}))
+            entry[2].setdefault(tag, float(value))
+        self.segments = segments
+        self.actual = {s: Series(p) for s, p in actual.items() if p}
+        self.splits = splits
+        self.known = known
+
+    def facts(self, cik: int, day: date) -> dict[str, Any] | None:
+        periods = self.by_cik.get(cik, {})
+        best = None
+        for period, filings in periods.items():
+            if any(f[0] <= day for f in filings.values()) and (best is None or period > best):
+                best = period
+        if best is None or day - best > self.max_age:
+            return None
+        newest_first = sorted(
+            ((f[0], adsh, f[1], f[2]) for adsh, f in periods[best].items() if f[0] <= day),
+            reverse=True,
+        )
+        out: dict[str, Any] = {"sic": newest_first[0][2], "shares_filed": newest_first[0][0]}
+        for item, tags in self.items.items():
+            out[item] = None
+            for filed, _adsh, _sic, values in newest_first:
+                found = [values[tag] for tag in tags if tag in values]
+                if found:
+                    out[item] = found[0]
+                    if item == "shares":
+                        out["shares_filed"] = filed
+                    break
+        return out
+
+    def mcap(self, sym: str, cal: list[date], pos: int, facts: dict[str, Any]) -> float | None:
+        if sym not in self.known or facts["shares"] is None:
+            return None
+        hit = price_near(self.actual.get(sym), cal, pos, STALE)
+        if hit is None:
+            return None
+        factor = math.prod(
+            r for d, r in self.splits.get(sym, []) if facts["shares_filed"] < d <= cal[pos]
+        )
+        return float(hit[1] * facts["shares"] * factor)
+
+    def scores(self, candidates: list[str], cal: list[date], pos: int) -> dict[str, float]:
+        day = cal[pos]
+        table: dict[str, dict[str, float]] = {}
+        for sym in candidates:
+            cik = next(
+                (
+                    c
+                    for a, b, c in self.segments.get(sym, [])
+                    if a <= day and (b is None or day < b)
+                ),
+                None,
+            )
+            facts = self.facts(cik, day) if cik is not None else None
+            if facts is None:
+                continue
+            sic = facts["sic"]
+            if sic is not None and any(lo <= sic <= hi for lo, hi in self.sic_ranges):
+                continue
+            mv = self.mcap(sym, cal, pos, facts)
+            a, e = facts["assets"], facts["equity"]
+            ni, cf = facts["net_income"], facts["operating_cash_flow"]
+            row: dict[str, float] = {}
+            if a is not None and a > 0:
+                if ni is not None:
+                    row["roa"] = ni / a
+                if cf is not None:
+                    row["cfoa"] = cf / a
+            if mv is not None and mv > 0:
+                if ni is not None:
+                    row["earnings_yield"] = ni / mv
+                if cf is not None:
+                    row["cash_flow_yield"] = cf / mv
+                if e is not None and e > 0:
+                    row["book_to_market"] = e / mv
+            table[sym] = row
+        pct: dict[tuple[str, str], float] = {}
+        for metric in list(self.signal["quality"]) + list(self.signal["value"]):
+            vals = [(row[metric], s) for s, row in table.items() if metric in row]
+            n = len(vals)
+            for v, s in vals:
+                below = sum(1 for w, _ in vals if w < v)
+                ties = sum(1 for w, _ in vals if w == v)
+                pct[(s, metric)] = 0.5 if n == 1 else (below + (ties - 1) / 2) / (n - 1)
+        out = {}
+        for s in table:
+            qs = [pct[(s, m)] for m in self.signal["quality"] if (s, m) in pct]
+            vs = [pct[(s, m)] for m in self.signal["value"] if (s, m) in pct]
+            if qs and len(vs) >= 2:
+                out[s] = (sum(qs) / len(qs) + sum(vs) / len(vs)) / 2
+        return out
+
+
 def period_return(
     series: Series | None, cal: list[date], entry: int, exit_: int, haircut: float
 ) -> float:
@@ -110,6 +243,7 @@ def backtest(
     haircut: float = 0.0,
     excluded: set[str] | None = None,
     blocked: list[tuple[str, date, date | None]] | None = None,
+    fundamentals: Fundamentals | None = None,
 ) -> list[dict[str, Any]]:
     uni = contract["universe"]
     series = {s: Series(p) for s, p in prices.items() if p}
@@ -134,16 +268,23 @@ def backtest(
         i = pos[d]
         members = {s for s, a, b in history if a <= d and (b is None or d < b)}
         wrong_company = {s for s, a, b in blocked or [] if a <= d and (b is None or d < b)}
-        scores = {}
-        for s in members - excluded - wrong_company:
+        candidates = []
+        for s in sorted(members - excluded - wrong_company):
             ser = series.get(s)
             if price_near(ser, cal, i, STALE) is None:
                 continue
             if price_near(ser, cal, i - need, STALE) is None:
                 continue
-            v = signal(ser, cal, i, spec)  # type: ignore[arg-type]
-            if v is not None:
-                scores[s] = v
+            candidates.append(s)
+        if spec["name"] == "quality_value":
+            assert fundamentals is not None, "quality_value needs fundamentals"
+            scores = fundamentals.scores(candidates, cal, i)
+        else:
+            scores = {}
+            for s in candidates:
+                v = signal(series[s], cal, i, spec)
+                if v is not None:
+                    scores[s] = v
         if spec["name"] == "low_volatility":
             order = sorted(scores.items(), key=lambda kv: (kv[1], kv[0]))
         else:
@@ -186,6 +327,48 @@ def compare(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def coverage_by_year(months: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    """Input coverage only (no returns): per year the lowest fundamentals coverage and the
+    smallest number of eligible stocks, so data gaps show before the real run."""
+    out: dict[str, dict[str, float]] = {}
+    for m in months:
+        f = m["fundamentals"]
+        base = f["candidates"] - f["financial"]
+        cov = f["scored"] / base if base else 0.0
+        row = out.setdefault(m["date"][:4], {"min_coverage": 1.0, "min_eligible": 1e9})
+        row["min_coverage"] = round(min(row["min_coverage"], cov), 4)
+        row["min_eligible"] = min(row["min_eligible"], f["scored"])
+        row["min_with_fundamentals"] = min(
+            row.get("min_with_fundamentals", 1e9), f["with_fundamentals"]
+        )
+    return out
+
+
+def fsds_rows(tables: Any, contract: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """Annual-report rows at period end for the contract's tags, read straight from the store."""
+    spec = contract["fundamentals"]
+    tags = sorted(
+        {
+            str(t)
+            for k in ("net_income", "operating_cash_flow", "assets", "equity", "shares")
+            for t in spec[k]
+        }
+    )
+    pattern = str(tables.root / "parquet" / "sec_fsds" / "*.parquet").replace("'", "''")
+    in_tags = ",".join("'" + t + "'" for t in tags)
+    con = tables._duckdb().connect()  # noqa: SLF001
+    try:
+        return list(
+            con.execute(
+                "SELECT adsh, cik, sic, period, filed, tag, qtrs, uom, value "
+                f"FROM read_parquet('{pattern}') WHERE form LIKE '10-K%' AND ddate = period "
+                f"AND tag IN ({in_tags}) ORDER BY adsh, tag, qtrs, uom, value"
+            ).fetchall()
+        )
+    finally:
+        con.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     from us_stock_research.config import load_settings
     from us_stock_research.quality.ohlcv import load_exceptions
@@ -215,17 +398,50 @@ def main(argv: list[str] | None = None) -> int:
     }
     blocked_map = xs.load_blocked(tables)
     blocked_list = [(s, a, b) for s, spans in blocked_map.items() for a, b in spans]
+    aliases = xs.load_aliases(args.aliases)
+    scorer, _ = xs.build_scorer(contract, tables, loaded, aliases)
+    independent_fund = None
+    if scorer is not None:
+        from us_stock_research.research import fundamentals as fu
+
+        rows = fsds_rows(tables, contract)
+        actual, splits, known = fu.load_market_inputs(tables, loaded.days, aliases)
+        independent_fund = Fundamentals(
+            contract,
+            rows,
+            fu.load_segments(tables),
+            {
+                s: {d: v for d, v in zip(loaded.days, vals, strict=True) if v is not None}
+                for s, vals in actual.items()
+            },
+            splits,
+            known,
+        )
     report = {}
     for label, cut in (("base", 0.0), ("haircut", haircut)):
         engine = xs.run(
-            contract, loaded, history, haircut=cut, excluded=quarantined, blocked=blocked_map
+            contract,
+            loaded,
+            history,
+            haircut=cut,
+            excluded=quarantined,
+            blocked=blocked_map,
+            scorer=scorer,
         )["months"]
         independent = backtest(
-            contract, as_dicts, history, haircut=cut, excluded=quarantined, blocked=blocked_list
+            contract,
+            as_dicts,
+            history,
+            haircut=cut,
+            excluded=quarantined,
+            blocked=blocked_list,
+            fundamentals=independent_fund,
         )
         report[label] = compare(engine, independent)
+        if label == "base" and any("fundamentals" in m for m in engine):
+            report["fundamentals_coverage"] = coverage_by_year(engine)
     print(json.dumps(report, indent=2))
-    return 0 if all(r.get("match") for r in report.values()) else 1
+    return 0 if all(r.get("match", True) for r in report.values()) else 1
 
 
 if __name__ == "__main__":

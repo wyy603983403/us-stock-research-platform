@@ -47,7 +47,7 @@ fi
 
 if [ "$(date +%u)" = "1" ]; then
   echo "== 每周：拆股记录、因子"
-  .venv/bin/usr-collect-splits --execute --report artifacts/extras/splits.json 2>/dev/null | tail -n 4 || true
+  .venv/bin/usr-collect-splits --yahoo-delisted --execute --report artifacts/extras/splits.json 2>/dev/null | tail -n 4 || true
   .venv/bin/usr-collect-factors --execute --report artifacts/extras/factors.json >/dev/null \
     && echo "  因子已更新" || echo "  因子下载失败"
 fi

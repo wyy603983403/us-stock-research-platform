@@ -131,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     for path in args.paths:
         try:
+            if (yaml.safe_load(path.read_text()) or {}).get("kind") == "cross_section":
+                from us_stock_research.research.cross_section import load_xs_contract
+
+                raw = load_xs_contract(path)
+                print(f"OK   {path} ({raw['name']}, {raw.get('status')}, cross_section)")
+                continue
             contract = load_contract(path)
             print(f"OK   {path} ({contract.name}, {contract.status})")
         except Exception as exc:  # noqa: BLE001 - report every failing contract
