@@ -35,8 +35,8 @@ from us_stock_research.research.trials import record_and_assess
 from us_stock_research.tables import TableStore
 
 MAX_STALE_DAYS = 5  # a signal price may come from up to 5 trading days earlier (halts, holidays)
-SIGNALS = ("momentum_12_1", "low_volatility", "quality_value")
-CROSS_SECTIONAL = ("quality_value",)  # scored from fundamentals over the whole cross-section
+SIGNALS = ("momentum_12_1", "low_volatility", "quality_value", "insider_buying")
+CROSS_SECTIONAL = ("quality_value", "insider_buying")  # scored from fundamentals over the whole cross-section
 Scorer = Callable[[list[str], int], tuple[dict[str, float], dict[str, int]]]
 REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "inference")
 
@@ -50,8 +50,9 @@ def load_xs_contract(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} lacks {missing}")
     if raw["signal"]["name"] not in SIGNALS:
         raise ValueError(f"unknown signal {raw['signal']['name']!r}; known: {SIGNALS}")
-    if raw["signal"]["name"] in CROSS_SECTIONAL and "fundamentals" not in raw:
-        raise ValueError(f"{path}: signal {raw['signal']['name']} needs a fundamentals block")
+    block = {"quality_value": "fundamentals", "insider_buying": "insider"}.get(raw["signal"]["name"])
+    if block and block not in raw:
+        raise ValueError(f"{path}: signal {raw['signal']['name']} needs a {block} block")
     for key in ("start", "end"):
         value = raw["universe"][key]
         raw["universe"][key] = value if isinstance(value, date) else date.fromisoformat(value)
