@@ -1,0 +1,55 @@
+# 预先登记（2026-10-01，在计算任何收益之前写定）。改参数 = 新版本研究。
+# 背景：用户 2026-10-01 决定“可以承担一定风险，追求收益”，把最差 12 个月亏损上限由 25% 放宽到 50%。
+schema_version: 1
+kind: leveraged_trend
+name: spy_trend_leverage_2x
+status: registered
+registered_at: 2026-10-01
+question: >
+  SPY 收盘价在 200 日均线上方时持有 2 倍日内再平衡的标普 500（相当于 SSO 一类杠杆 ETF），下方时持有短期国债，
+  扣除融资、费率和交易成本后，长期收益能否显著超过持有 SPY，且最差 12 个月亏损不超过 50%？
+hypothesis: >
+  股市大跌多发生在价格跌破长期均线之后的阶段（2000–02、2008、2022），趋势开关能避开其中大部分；
+  避开大跌后，上涨阶段可以承受杠杆。杠杆 ETF 的波动损耗在低波动的上涨趋势中较小（Gayed & Bilello 2016，
+  “Leverage for the Long Run”）。主检验：相对 SPY 的月均超额收益 95% 置信区间下限 > 0。
+data:
+  signal_and_asset: SPY                   # 雅虎日线复权收盘价（含分红再投资）
+  cash_rate: DGS3MO                       # FRED 3 个月美债收益率；缺失日沿用前值
+  start: 2001-01-01                       # 日线从 2000-01-03 开始，留出 200 日均线预热
+  end: 2025-12-31
+rule:
+  sma_days: 200
+  signal: 收盘价 > 200 日简单均线（含当日）
+  execution_lag_days: 1                   # 信号日次日收盘换仓
+  leverage: 2.0
+  leveraged_daily_return: >
+    L × SPY 日收益 − (L − 1) × (前一日 3 个月国债收益率 + 0.50%) / 252 − 0.90% / 252
+    （融资按国债利率加 0.5% 计；0.9% 为杠杆 ETF 典型费率）
+  cash_daily_return: 前一日 3 个月国债收益率 / 252
+  switch_cost_bps: 10                     # 每次在杠杆仓位与国债之间切换，按净值的 10 bp 计
+benchmark:
+  primary: SPY                            # 持有 SPY（复权，含分红）
+inference:
+  frequency: calendar_month
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261003
+risk:
+  max_worst_12m_loss: 0.50                # 用户 2026-10-01 的决定
+success_criteria:
+  - 相对 SPY 的月均超额收益（按自然月），95% 置信区间下限 > 0
+  - 最差滚动 12 个月亏损不超过 50%
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验）
+  - 模型验证：在 SSO 有数据的时期（2006-06 起），本研究的 2 倍日收益模型与 SSO 实际复权收益的年化差异在 ±1.5% 以内
+sensitivity:                              # 只报告，不参与晋级；看过之后选它们需要另行登记新版本
+  leverage: [1.0, 3.0]
+  switch_cost_bps: [30]
+limitations:
+  - 单一资产（标普 500 指数），名义敞口 200%，超出 configs/risk/default.yml 的单一资产 35% 上限；晋级需你另行批准这一点
+  - 200 日均线是业内最常用的参数，并非本数据上优化所得，但“趋势策略在 2000–2025 有效”的认识本身有后见之明
+  - 杠杆 ETF 实际成本随利率、互换价差变化；模型验证用 SSO 校准
+  - 跌破均线前的跌幅无法避免（如 2020 年 2 月、1987 年式单日暴跌）；2 倍杠杆下单日 −20% 即亏 40%
+human_review:
+  approved: false
