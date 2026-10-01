@@ -395,7 +395,10 @@ def build_scorer(
         return None, None
     from us_stock_research.research import fundamentals as fu
 
-    reports, fund_id = fu.load_reports(tables, fu.tag_lists(contract["fundamentals"]))
+    spec = contract["fundamentals"]
+    reports, fund_id = fu.load_reports(
+        tables, fu.tag_lists(spec), str(spec.get("source", "sec_fsds"))
+    )
     actual, splits, known = fu.load_market_inputs(tables, prices.days, aliases)
     scorer = fu.QualityValue(
         contract, prices.days, reports, fu.load_segments(tables), actual, splits, known

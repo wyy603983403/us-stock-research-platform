@@ -1422,6 +1422,7 @@ QV_SPEC = {
     "shares": [
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
+        "CommonStockSharesOutstanding",
     ],
 }
 QV_SIGNAL = {
@@ -1545,8 +1546,23 @@ def test_quality_value_engine_matches_independent() -> None:
             ni = rng.choice([None, rng.uniform(-5, 15)]) if k == 9 else rng.uniform(-5, 15)
             equity = rng.uniform(-10, 60) if k % 5 == 0 else rng.uniform(10, 60)
             filed = date(year + 1, 2, 10 + k)
+            shares = None if k in (10, 11) else rng.uniform(1, 3)  # S10/S11: balance sheet only
             rows += _annual(f"{k}-{year}", cik, sic, date(year, 12, 31), filed, ni,
-                            rng.uniform(-3, 20), assets, equity, rng.uniform(1, 3))  # fmt: skip
+                            rng.uniform(-3, 20), assets, equity, shares)  # fmt: skip
+            if k in (10, 11):
+                rows += [
+                    (
+                        f"{k}-{year}",
+                        cik,
+                        sic,
+                        date(year, 12, 31),
+                        filed,
+                        "CommonStockSharesOutstanding",
+                        0,
+                        "shares",
+                        rng.uniform(1, 3),
+                    )
+                ]
             if k == 4:  # an amendment restating net income two months later
                 rows += [(f"{k}-{year}A", cik, sic, date(year, 12, 31), date(year + 1, 4, 20),
                           "NetIncomeLoss", 4, "USD", rng.uniform(0, 10))]  # fmt: skip
@@ -1586,3 +1602,57 @@ def test_quality_value_engine_matches_independent() -> None:
     assert stats["financial"] == 1 and 8 <= stats["scored"] <= 13
     assert all("S3" not in m["top"] for m in a)
     assert xs.fundamentals_coverage(stats) == stats["scored"] / (stats["candidates"] - 1)
+
+
+def test_company_facts_become_annual_rows() -> None:
+    from us_stock_research.collectors.sec_fundamentals import parse_wide
+    from us_stock_research.research import fundamentals as fu
+
+    spec = dict(QV_SPEC, shares=["WeightedAverageNumberOfDilutedSharesOutstanding",
+                                 "EntityCommonStockSharesOutstanding",
+                                 "CommonStockSharesOutstanding"])  # fmt: skip
+    tags = fu.tag_lists(spec)
+
+    def fact(tag, start, end, val, filed="2024-02-20", form="10-K", accn="A24", tax="us-gaap"):  # type: ignore[no-untyped-def]
+        return {"start": start, "end": end, "val": val, "filed": filed, "form": form,
+                "accn": accn, "fy": 2023, "fp": "FY"}  # fmt: skip
+
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "NetIncomeLoss": {"units": {"USD": [
+                    fact("", "2023-01-01", "2023-12-31", 10.0),
+                    fact("", "2022-01-01", "2022-12-31", 8.0),  # comparative year
+                    fact("", "2023-10-01", "2023-12-31", 3.0),  # a quarter inside the 10-K
+                    fact("", "2023-01-01", "2023-09-30", 7.0, "2023-11-01", "10-Q", "Q3"),
+                ]}},
+                "Assets": {"units": {"USD": [fact("", None, "2023-12-31", 100.0),
+                                             fact("", None, "2022-12-31", 90.0)]}},
+                "CommonStockSharesOutstanding": {"units": {"shares": [
+                    fact("", None, "2023-12-31", 5.0)]}},
+            },
+            "dei": {
+                "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                    fact("", None, "2024-02-01", 4.0), fact("", None, "2024-02-01", 1.0),
+                    fact("", None, "2023-10-20", 9.0, "2023-11-01", "10-Q", "Q3"),
+                ]}},
+            },
+        }
+    }  # fmt: skip
+    wide = parse_wide(payload)
+    assert len(wide) == 10 and wide[0][0] == "dei"
+    facts = [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[10]) for r in wide]
+    rows = fu.normalize_facts(7, facts, tags, [(date(2010, 1, 1), 3571)])  # type: ignore[arg-type]
+    got = {(r[5], r[6]): r[8] for r in rows}
+    assert got == {
+        ("NetIncomeLoss", 4): 10.0,
+        ("Assets", 0): 100.0,
+        ("CommonStockSharesOutstanding", 0): 5.0,
+        ("EntityCommonStockSharesOutstanding", 0): 4.0,  # cover date, largest class value
+    }
+    assert {r[3] for r in rows} == {date(2023, 12, 31)} and {r[2] for r in rows} == {3571}
+    reports = fu.parse_rows(rows, tags)[7]
+    items = fu.resolve(reports, date(2024, 3, 1), tags, 550)
+    assert items and items["shares"] == 4.0 and items["filed"] == date(2024, 2, 20)
+    assert fu.sic_on([(date(2015, 1, 1), 100), (date(2020, 1, 1), 200)], date(2014, 1, 1)) == 100
+    assert fu.sic_on([(date(2015, 1, 1), 100), (date(2020, 1, 1), 200)], date(2021, 1, 1)) == 200

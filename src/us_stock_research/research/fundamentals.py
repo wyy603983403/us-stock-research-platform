@@ -2,9 +2,13 @@
 
 Inputs, all from the local store:
 
-* ``sec_fsds`` -- SEC financial statement data sets, one row per (filing, tag, date, period
-  length). Only annual reports (10-K, 10-K/A, 10-KT) and the contract's tags are read: flows with
-  ``qtrs = 4`` and stocks with ``qtrs = 0``, both dated at the report's period end.
+* ``sec_companyfacts`` (contract ``source: sec_companyfacts``) -- SEC company facts per filer,
+  every fact with the filing (accession) that reported it and its filing date. A filing's period
+  is the latest end of its one-year facts; flows are one-year facts ending then (``qtrs = 4``),
+  stocks are instants then (``qtrs = 0``); the cover-page share count (dei) is the latest one
+  dated on or before the filing. SIC codes come from the financial statement data sets.
+* ``sec_fsds`` (``source: sec_fsds``) -- SEC financial statement data sets, one row per (filing,
+  tag, date, period length); since SEC's 2024 reprocessing only the face of the statements.
 * ``meta/ticker_cik`` -- which SEC filer used a ticker when (built from Form 4 filings).
 * ``close`` prices and split events -- for the market value. Yahoo's ``close`` is split-adjusted
   to today and is turned back into the day's actual price with the later splits; Tiingo-sourced
@@ -20,11 +24,19 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 ANNUAL_FORMS = ("10-K", "10-K/A", "10-KT", "10-KT/A")
 ITEMS = ("net_income", "operating_cash_flow", "assets", "equity", "shares")
-FLOW_ITEMS = ("net_income", "operating_cash_flow", "shares")
+FLOW_ITEMS = ("net_income", "operating_cash_flow")
+YEAR_DAYS = (330, 400)  # a fiscal year's length, 52/53-week years and transition periods aside
+
+
+def is_flow(item: str, tag: str) -> bool:
+    """Income and cash-flow items cover the year; share counts only when weighted averages."""
+    return item in FLOW_ITEMS or (item == "shares" and tag.startswith("WeightedAverage"))
+
+
 QUALITY = ("roa", "cfoa")
 VALUE = ("earnings_yield", "book_to_market", "cash_flow_yield")
 STALE = 5
@@ -49,7 +61,7 @@ def tag_lists(spec: dict[str, Any]) -> dict[str, list[str]]:
 
 def parse_rows(rows: list[tuple[Any, ...]], tags: dict[str, list[str]]) -> dict[int, list[Report]]:
     """``adsh, cik, sic, period, filed, tag, qtrs, uom, value`` rows (``ddate = period``)."""
-    flow_tags = {t for item in FLOW_ITEMS for t in tags[item]}
+    flow_tags = {t for item, ts in tags.items() for t in ts if is_flow(item, t)}
     wanted = {t for ts in tags.values() for t in ts}
     shares_tags = set(tags["shares"])
     reports: dict[str, Report] = {}
@@ -70,27 +82,146 @@ def parse_rows(rows: list[tuple[Any, ...]], tags: dict[str, list[str]]) -> dict[
     return out
 
 
-def load_reports(tables: Any, tags: dict[str, list[str]]) -> tuple[dict[int, list[Report]], str]:
+def load_reports(
+    tables: Any, tags: dict[str, list[str]], source: str = "sec_fsds"
+) -> tuple[dict[int, list[Report]], str]:
     """Annual reports of every CIK in ``meta/ticker_cik`` and a content hash of the rows used."""
+    rows = annual_rows(tables, tags, source)
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(repr(row).encode())
+    return parse_rows(rows, tags), f"{source}-annual:sha256:" + digest.hexdigest()
+
+
+def annual_rows(tables: Any, tags: dict[str, list[str]], source: str) -> list[tuple[Any, ...]]:
+    """``adsh, cik, sic, period, filed, tag, qtrs, uom, value`` rows of annual reports."""
+    if source == "sec_companyfacts":
+        return companyfacts_rows(tables, tags)
+    if source != "sec_fsds":
+        raise ValueError(f"unknown fundamentals source {source!r}")
     pattern = str(tables.root / "parquet" / "sec_fsds" / "*.parquet").replace("'", "''")
     cik_file = str(tables.path("meta", "ticker_cik")).replace("'", "''")
     tag_sql = ", ".join("'" + t.replace("'", "''") + "'" for ts in tags.values() for t in ts)
     forms = ", ".join(f"'{f}'" for f in ANNUAL_FORMS)
     con = tables._duckdb().connect()  # noqa: SLF001
     try:
+        return list(
+            con.execute(
+                "SELECT adsh, cik, sic, period, filed, tag, qtrs, uom, value "
+                f"FROM read_parquet('{pattern}') WHERE form IN ({forms}) AND ddate = period "
+                f"AND qtrs IN (0, 4) AND tag IN ({tag_sql}) "
+                f"AND cik IN (SELECT cik FROM read_parquet('{cik_file}')) "
+                "ORDER BY adsh, tag, qtrs, uom, value"
+            ).fetchall()
+        )
+    finally:
+        con.close()
+
+
+def sic_history(tables: Any) -> dict[int, list[tuple[date, int]]]:
+    """SIC code of each filer by filing date, from the financial statement data sets."""
+    pattern = str(tables.root / "parquet" / "sec_fsds" / "*.parquet").replace("'", "''")
+    con = tables._duckdb().connect()  # noqa: SLF001
+    try:
         rows = con.execute(
-            "SELECT adsh, cik, sic, period, filed, tag, qtrs, uom, value "
-            f"FROM read_parquet('{pattern}') WHERE form IN ({forms}) AND ddate = period "
-            f"AND qtrs IN (0, 4) AND tag IN ({tag_sql}) "
-            f"AND cik IN (SELECT cik FROM read_parquet('{cik_file}')) "
-            "ORDER BY adsh, tag, qtrs, uom, value"
+            f"SELECT DISTINCT cik, filed, sic FROM read_parquet('{pattern}') "
+            "WHERE sic IS NOT NULL ORDER BY cik, filed, sic"
         ).fetchall()
     finally:
         con.close()
-    digest = hashlib.sha256()
-    for row in rows:
-        digest.update(repr(row).encode())
-    return parse_rows(rows, tags), "fsds-annual:sha256:" + digest.hexdigest()
+    out: dict[int, list[tuple[date, int]]] = {}
+    for cik, filed, sic in rows:
+        out.setdefault(int(cik), []).append((filed, int(sic)))
+    return out
+
+
+def sic_on(history: list[tuple[date, int]], filed: date) -> int | None:
+    """Latest SIC on or before ``filed``; before the first known filing, the first one."""
+    best = None
+    for d, sic in history:
+        if d <= filed:
+            best = sic
+    return best if best is not None else (history[0][1] if history else None)
+
+
+Fact = tuple[str, str, str, date | None, date, float, date, str, str]
+# taxonomy, tag, unit, start, end, value, filed, form, accn
+
+
+def normalize_facts(
+    cik: int, facts: list[Fact], tags: dict[str, list[str]], sics: list[tuple[date, int]]
+) -> list[tuple[Any, ...]]:
+    """Company facts of one filer -> annual-report rows in the FSDS layout (see module doc)."""
+    item_of = {t: item for item, ts in tags.items() for t in ts}
+    by_accn: dict[str, list[Fact]] = {}
+    for f in facts:
+        if f[7] in ANNUAL_FORMS and f[1] in item_of:
+            by_accn.setdefault(f[8], []).append(f)
+    out: list[tuple[Any, ...]] = []
+    for accn, items in sorted(by_accn.items()):
+        filed = min(f[6] for f in items)
+        year_ends = [
+            f[4]
+            for f in items
+            if f[0] == "us-gaap"
+            and f[3] is not None
+            and YEAR_DAYS[0] <= (f[4] - f[3]).days <= YEAR_DAYS[1]
+        ]
+        if not year_ends:
+            continue
+        period = max(year_ends)
+        sic = sic_on(sics, filed)
+        chosen: dict[tuple[str, int], tuple[Any, ...]] = {}
+        for taxonomy, tag, unit, start, end, value, _f, _form, _a in sorted(
+            items, key=lambda f: (f[1], f[4], f[5])
+        ):
+            item = item_of[tag]
+            if taxonomy == "dei":
+                if start is None and end <= filed:
+                    key = (tag, 0)
+                    old = chosen.get(key)
+                    # latest cover date; several values on it (share classes) -> the largest
+                    if old is None or (end, value) > (old[-2], old[-1]):
+                        chosen[key] = (accn, cik, sic, period, filed, tag, 0, unit, end, value)
+                continue
+            flow = is_flow(item, tag)
+            if flow:
+                ok = start is not None and end == period
+                ok = ok and YEAR_DAYS[0] <= (end - start).days <= YEAR_DAYS[1]  # type: ignore[operator]
+            else:
+                ok = start is None and end == period
+            if ok:
+                chosen.setdefault(
+                    (tag, 4 if flow else 0),
+                    (accn, cik, sic, period, filed, tag, 4 if flow else 0, unit, end, value),
+                )
+        out += [r[:8] + (r[9],) for _, r in sorted(chosen.items())]
+    return out
+
+
+def companyfacts_rows(tables: Any, tags: dict[str, list[str]]) -> list[tuple[Any, ...]]:
+    pattern = str(tables.root / "parquet" / "sec_companyfacts" / "*.parquet").replace("'", "''")
+    tag_sql = ", ".join("'" + t.replace("'", "''") + "'" for ts in tags.values() for t in ts)
+    forms = ", ".join(f"'{f}'" for f in ANNUAL_FORMS)
+    con = tables._duckdb().connect()  # noqa: SLF001
+    try:
+        facts = con.execute(
+            "SELECT CAST(regexp_extract(filename, 'CIK(\\d+)\\.parquet$', 1) AS BIGINT), "
+            "taxonomy, tag, unit, period_start, period_end, value, filed, form, accn "
+            f"FROM read_parquet('{pattern}', filename=true) "
+            f"WHERE form IN ({forms}) AND tag IN ({tag_sql}) "
+            "ORDER BY 1, accn, taxonomy, tag, unit, period_end, period_start, value"
+        ).fetchall()
+    finally:
+        con.close()
+    sics = sic_history(tables)
+    per_cik: dict[int, list[Fact]] = {}
+    for cik, *rest in facts:
+        per_cik.setdefault(int(cik), []).append(cast(Fact, tuple(rest)))
+    rows: list[tuple[Any, ...]] = []
+    for cik in sorted(per_cik):
+        rows += normalize_facts(cik, per_cik[cik], tags, sics.get(cik, []))
+    return rows
 
 
 def resolve(

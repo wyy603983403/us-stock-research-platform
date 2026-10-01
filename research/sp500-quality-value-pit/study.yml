@@ -19,18 +19,18 @@ universe:
   min_history_days: 253
   exclude_sic: [6000, 6999]               # 金融（银行、保险、券商、REIT）：资产负债表口径不可比
 fundamentals:
-  source: sec_fsds                        # SEC 财报数据集；CIK 来自 meta/ticker_cik（内部人申报匹配）
-  statements: annual                      # 10-K/10-K/A/10-KT：qtrs=4 的流量、ddate=期末的存量
+  source: sec_companyfacts                # SEC company facts（含附注与封面）；CIK 来自 meta/ticker_cik；SIC 来自 sec_fsds
+  statements: annual                      # 10-K/10-K/A/10-KT：期末结束的一年期流量（330–400 天）、期末时点的存量
   known_by: filed <= signal_day           # 只用信号日当天或之前已经提交的报表
   max_age_days: 550                       # 年报期末距信号日超过 18 个月视为缺失
   report_choice: >
     已知年报中取期末（period）最新的一期；同一期有修订（10-K/A）时，每个项目从提交日最新、
     且含该项目的那份取值；项目内按下列标签顺序取第一个有值的
   net_income: [NetIncomeLoss, ProfitLoss, NetIncomeLossAvailableToCommonStockholdersBasic]
-  operating_cash_flow: [NetCashProvidedByUsedInOperatingActivities]
+  operating_cash_flow: [NetCashProvidedByUsedInOperatingActivities, NetCashProvidedByUsedInOperatingActivitiesContinuingOperations]
   assets: [Assets]
   equity: [StockholdersEquity, StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest]
-  shares: [WeightedAverageNumberOfDilutedSharesOutstanding, WeightedAverageNumberOfSharesOutstandingBasic]
+  shares: [WeightedAverageNumberOfDilutedSharesOutstanding, WeightedAverageNumberOfSharesOutstandingBasic, EntityCommonStockSharesOutstanding, CommonStockSharesOutstanding]
   market_value: >
     信号日收盘价换算为当日实际股价（不做分红调整；雅虎收盘价按其后全部拆股还原，Tiingo 本身即原始价）
     × 年报加权稀释股数 × 年报提交日之后、信号日及之前的拆股比例（提交前发生的拆股，按会计准则
@@ -71,8 +71,18 @@ limitations:
   - 2012–2025 不含 2008 年那样的危机，回撤与 25% 约束的结论外推性有限
   - SEC 2024-12 重处理后只含三大报表，流通股数用加权稀释股数近似
   - 前成分股中雅虎来源者的拆股记录需另行下载；缺失时该股当月不计市值类指标
+  - 股数按顺序取：加权稀释、加权基本、封面流通股数（dei，提交日前最近一个日期，多个值取最大）、资产负债表流通股数
   - 年报更新慢（最长约 15 个月），信号比用季报的研究更“旧”
   - 双重股权（GOOGL/GOOG、FOX/FOXA、NWS/NWSA 等）两个代码共用同一 CIK 的财报，可能同时入选；
     市值用单一类别股价 × 全部类别股数近似
+amendments:
+  - date: 2026-10-01
+    before_any_return: true
+    change: 财报来源由 sec_fsds 改为 sec_companyfacts；经营现金流加 ContinuingOperations 标签；股数加封面与资产负债表两个后备标签
+    reason: >
+      只看输入覆盖率的诊断（verify_xsec 的 fundamentals_coverage，不含任何收益数字）显示财报覆盖率
+      仅 66–73%，低于 85% 门槛。原因：SEC 2024-12 重处理后的 FSDS 只含三大报表正表，约 1/4 公司
+      （如 BA、AES）的加权股数只在附注里；2014–2017 年不少公司（如 AAPL）用 ContinuingOperations
+      标签报经营现金流，而 FSDS 下载时没保留该标签。指标定义、选股规则、检验与门槛都不变。
 human_review:
   approved: false

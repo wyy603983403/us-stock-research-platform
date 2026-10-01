@@ -84,7 +84,7 @@ class Fundamentals:
     close per ticker. ``splits``: ticker -> [(day, ratio)]. ``known``: tickers with known splits.
     """
 
-    FLOWS = ("net_income", "operating_cash_flow", "shares")
+    FLOWS = ("net_income", "operating_cash_flow")
 
     def __init__(
         self,
@@ -110,7 +110,8 @@ class Fundamentals:
             item = next((k for k, tags in self.items.items() if tag in tags), None)
             if item is None or value is None:
                 continue
-            if qtrs != (4 if item in self.FLOWS else 0):
+            flow = item in self.FLOWS or (item == "shares" and tag.startswith("WeightedAverage"))
+            if qtrs != (4 if flow else 0):
                 continue
             if uom != ("shares" if item == "shares" else "USD"):
                 continue
@@ -404,7 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     if scorer is not None:
         from us_stock_research.research import fundamentals as fu
 
-        rows = fsds_rows(tables, contract)
+        source = str(contract["fundamentals"].get("source", "sec_fsds"))
+        if source == "sec_fsds":
+            rows = fsds_rows(tables, contract)
+        else:  # company facts are normalized to the same layout (unit-tested separately)
+            rows = fu.annual_rows(tables, fu.tag_lists(contract["fundamentals"]), source)
         actual, splits, known = fu.load_market_inputs(tables, loaded.days, aliases)
         independent_fund = Fundamentals(
             contract,
