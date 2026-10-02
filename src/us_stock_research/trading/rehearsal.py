@@ -137,6 +137,7 @@ def dump_ledger(ledger: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     from us_stock_research.config import load_settings
+    from us_stock_research.quality.intraday import last_closed_session
     from us_stock_research.storage import open_store
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -153,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     ledger = load_ledger(ledger_path, args.capital)
     store = open_store(load_settings())
     booked = []
+    closed = last_closed_session(datetime.now(UTC))
     for path in sorted((args.orders_dir / args.study).glob("*.json")):
         intent = json.loads(path.read_text())
         if intent["signal_day"] in ledger["filled"]:
@@ -163,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"跳过 {path.name}：早于账本日期 {ledger['as_of']}", file=sys.stderr)
             continue
         fill_day = next_trading_day(date.fromisoformat(intent["signal_day"]))
+        if fill_day > closed:  # a bar for a session still trading is not a close
+            print(f"{intent['signal_day']}：成交日 {fill_day} 尚未收盘，稍后再记账")
+            break
         symbols = {o["symbol"] for o in intent["orders"]} | set(ledger["positions"])
         closes: dict[str, float] = {}
         dividends: dict[str, dict[date, float]] = {}
