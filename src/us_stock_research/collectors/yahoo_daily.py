@@ -99,9 +99,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="+", help="tickers, e.g. SPY QQQ IEF")
     parser.add_argument("--start", type=date.fromisoformat, default=date(2005, 1, 1))
-    parser.add_argument("--end", type=date.fromisoformat, default=datetime.now(UTC).date())
+    parser.add_argument(
+        "--end",
+        type=date.fromisoformat,
+        help="last day (default and upper limit: the most recent closed NYSE session)",
+    )
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     args = parser.parse_args(argv)
+    from us_stock_research.quality.intraday import last_closed_session
+
+    # a download during US trading hours would otherwise store today's half-finished bar
+    closed = last_closed_session(datetime.now(UTC))
+    end = min(args.end, closed) if args.end else closed
     settings = load_settings()
     store = open_store(settings)
     summary: list[dict[str, Any]] = []
@@ -109,7 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         timeout=settings.http_timeout_seconds, headers={"User-Agent": USER_AGENT}
     ) as client:
         for symbol in args.symbols:
-            bars, dividends = fetch_symbol(client, symbol, args.start, args.end)
+            bars, dividends = fetch_symbol(client, symbol, args.start, end)
+            bars = [b for b in bars if b.day <= end]
             item: dict[str, Any] = {
                 "symbol": symbol.upper(),
                 "rows": len(bars),

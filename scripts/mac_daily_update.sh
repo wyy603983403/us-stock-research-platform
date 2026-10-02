@@ -33,6 +33,10 @@ for s, e in list(r["quality_errors"].items())[:10]:
     print("  质量", s, e[:1])
 for s, e in list(r["failed"].items())[:10]:
     print("  失败", s, e[:80])
+behind = r.get("behind", [])
+if behind:
+    print(f"  注意：{len(behind)} 只没拿到 {r['date']} 的数据（数据源延迟或限流，下次运行会补）：",
+          " ".join(behind[:15]) + (" …" if len(behind) > 15 else ""))
 PY
 
 [ -z "$FLAG" ] && exit 0

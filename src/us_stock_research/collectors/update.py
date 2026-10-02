@@ -120,6 +120,8 @@ def run_update(
         "appended_days": sum(r["new_days"] for r in results if r["action"] == "append"),
         "quality_errors": {s: a.errors[:3] for s, a in audited.items() if a.errors},
         "failed": failed,
+        # the source did not deliver the latest session (throttling, stale cache, halted stock)
+        "behind": sorted(r["symbol"] for r in results if r["last"] < today.isoformat()),
         "symbols": len(symbols),
     }
 
