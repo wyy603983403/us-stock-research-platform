@@ -48,5 +48,7 @@
     最差 12 月 −34%、DSR 0.976、与 SSO 模型差 0.11%，唯独超额收益区间下限 −0.27%/月不为正 → 未通过。
     SPY 日线已补到 1993 年起，新增 SSO。试验登记 7 组。见 docs/results/spy-trend-leverage-2x.md。
 20. 杠杆趋势每日演练 `usr-lt-intent`（SSO/BIL，熔断线 40% 为用户决定）已接入每日更新；首次运行建仓（全现金 10 万）。
-21. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+21. 样本外检验 1955–2000（预先登记 49c06c1）：未通过——超额区间下限 −0.04%/月、1987 崩盘使最差 12 月 −57.3%。
+    数据：^GSPC 1950 起、multpl 月度股息率（`usr-collect-sp-dividend-yield`）、FRED DTB3；全收益构造与 SPY 差 0.07%/年。试验登记 8 组。
+22. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
