@@ -5,7 +5,7 @@
 schema_version: 1
 kind: leveraged_trend
 name: ndx_trend_voltarget
-status: candidate
+status: registered            # 已运行，未通过主检验（2026-10-03）
 registered_at: 2026-10-03
 question: >
   纳斯达克 100 在 200 日均线上方时，按“目标波动率 25% ÷ 最近 20 日实际波动率”决定仓位（最高 2 倍），下方时持有国库券；

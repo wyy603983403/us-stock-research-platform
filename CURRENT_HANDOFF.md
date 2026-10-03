@@ -60,3 +60,6 @@
 26. 云服务器（43.135.185.94）部署脚本 `scripts/server_deploy.sh` / `server_setup.sh` / `server_daily.sh` / `notify.sh`，说明见 docs/server.md。
 27. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
+28. 监控网页（2026-10-03）：服务器 Caddy `usr-web.service`，https://43.135.185.94:8443（443 被已有 nginx 占用），基本认证，
+    只开放 /dashboard.html 与 /status.json；`scripts/server_web.sh` 设置/改密码。飞书机器人通知 `FEISHU_WEBHOOK`（scripts/notify.sh）。
+29. 纳指 100 趋势 + 波动率目标（预先登记 4f16c4c）未通过：年化 12.7% vs 14.6%，见 docs/results/ndx-trend-voltarget.md。试验登记 10 组。
