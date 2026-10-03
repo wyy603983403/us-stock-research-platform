@@ -103,6 +103,53 @@ def simulate(
     return out
 
 
+def simulate_vol_target(
+    days: list[date],
+    prices: list[float],
+    yields_pct: list[float | None],
+    *,
+    sma_days: int,
+    vol_window: int,
+    vol_target: float,
+    max_leverage: float,
+    band: float,
+    cost_bps: float,
+) -> list[tuple[date, float, float, float]]:
+    """Trend switch with volatility-scaled exposure: (day, strategy, asset return, exposure)."""
+    n = len(prices)
+    rets = [0.0] + [prices[i] / prices[i - 1] - 1 for i in range(1, n)]
+    target: list[float | None] = [None] * n
+    for i in range(max(sma_days - 1, vol_window), n):
+        sma = sum(prices[i - sma_days + 1 : i + 1]) / sma_days
+        if prices[i] <= sma:
+            target[i] = 0.0
+            continue
+        window = rets[i - vol_window + 1 : i + 1]
+        mean = sum(window) / vol_window
+        vol = math.sqrt(sum((x - mean) ** 2 for x in window) / (vol_window - 1) * TRADING_DAYS)
+        target[i] = max_leverage if vol <= 0 else min(max_leverage, vol_target / vol)
+    out: list[tuple[date, float, float, float]] = []
+    held: float | None = None
+    for k in range(2, n):
+        t, y = target[k - 2], yields_pct[k - 1]
+        if t is None or y is None:
+            continue
+        cost = 0.0
+        if held is None or (t == 0.0) != (held == 0.0) or abs(t - held) > band:
+            cost = abs(t - (held or 0.0)) * cost_bps / 10_000 if held is not None else 0.0
+            held = t
+        rate = y / 100
+        e, r = held, rets[k]
+        if e <= 1:
+            ret = e * r + (1 - e) * rate / TRADING_DAYS
+        else:
+            ret = e * r - (e - 1) * (rate + FINANCING_SPREAD + LEVERAGED_FEE) / TRADING_DAYS
+        if cost:
+            ret = (1 + ret) * (1 - cost) - 1
+        out.append((days[k], ret, r, e))
+    return out
+
+
 def monthly(daily: list[tuple[date, float]]) -> list[tuple[str, float]]:
     months: dict[str, float] = {}
     for d, r in daily:
@@ -142,19 +189,41 @@ def run(
     *,
     leverage: float | None = None,
     switch_cost_bps: float | None = None,
+    vol_target: float | None = None,
+    start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, Any]:
     rule, data = contract["rule"], contract["data"]
-    sim = simulate(
-        days,
-        prices,
-        yields_pct,
-        sma_days=int(rule["sma_days"]),
-        leverage=float(rule["leverage"] if leverage is None else leverage),
-        switch_cost_bps=float(
-            rule["switch_cost_bps"] if switch_cost_bps is None else switch_cost_bps
-        ),
-    )
-    sim = [row for row in sim if data["start"] <= row[0] <= data["end"]]
+    sim: list[tuple[date, float, float, Any]]
+    if "vol_target" in rule:
+        sim = list(
+            simulate_vol_target(
+                days,
+                prices,
+                yields_pct,
+                sma_days=int(rule["sma_days"]),
+                vol_window=int(rule["vol_window_days"]),
+                vol_target=float(rule["vol_target"] if vol_target is None else vol_target),
+                max_leverage=float(rule["max_leverage"]),
+                band=float(rule["rebalance_band"]),
+                cost_bps=float(rule["trading_cost_bps"]),
+            )
+        )
+    else:
+        sim = list(
+            simulate(
+                days,
+                prices,
+                yields_pct,
+                sma_days=int(rule["sma_days"]),
+                leverage=float(rule["leverage"] if leverage is None else leverage),
+                switch_cost_bps=float(
+                    rule["switch_cost_bps"] if switch_cost_bps is None else switch_cost_bps
+                ),
+            )
+        )
+    lo, hi = start or data["start"], end or data["end"]
+    sim = [row for row in sim if lo <= row[0] <= hi]
     strat = monthly([(d, r) for d, r, _, _ in sim])
     bench = monthly([(d, a) for d, _, a, _ in sim])
     switches = sum(1 for a, b in zip(sim, sim[1:], strict=False) if a[3] != b[3])
@@ -164,7 +233,8 @@ def run(
         "months": [m for m, _ in strat],
         "strategy": [r for _, r in strat],
         "benchmark": [r for _, r in bench],
-        "time_in_market": sum(row[3] for row in sim) / len(sim),
+        "time_in_market": sum(1 for row in sim if row[3]) / len(sim),
+        "average_exposure": sum(float(row[3]) for row in sim) / len(sim),
         "switches": switches,
         "switches_per_year": switches / (len(sim) / TRADING_DAYS),
     }
@@ -185,6 +255,7 @@ def summarize(contract: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
         ),
         "time_in_market": result["time_in_market"],
         "switches_per_year": result["switches_per_year"],
+        "average_exposure": result["average_exposure"],
     }
 
 
@@ -379,6 +450,17 @@ def main(argv: list[str] | None = None) -> int:
         sens[f"switch_cost_{bps:g}bp"] = summarize(
             contract, run(contract, days, prices, yields, switch_cost_bps=float(bps))
         )
+    for vt in contract.get("reporting", {}).get("sensitivity_vol_target", []):
+        sens[f"vol_target_{vt:g}"] = summarize(
+            contract, run(contract, days, prices, yields, vol_target=float(vt))
+        )
+    sub_periods = {}
+    for lo, hi in contract.get("reporting", {}).get("subperiods", []):
+        a, b = date.fromisoformat(str(lo)), date.fromisoformat(str(hi))
+        sub_periods[f"{a.year}-{b.year}"] = summarize(
+            contract, run(contract, days, prices, yields, start=a, end=b)
+        )
+    artifact["subperiods"] = sub_periods
     artifact["sensitivity"] = {
         k: {"cagr": v["strategy"]["cagr"], "worst_12m": v["strategy"]["worst_rolling_12m_return"],
             "max_drawdown": v["strategy"]["max_drawdown"],
@@ -394,6 +476,16 @@ def main(argv: list[str] | None = None) -> int:
     brief.update(
         time_in_market=summary["time_in_market"],
         switches_per_year=summary["switches_per_year"],
+        average_exposure=summary["average_exposure"],
+        subperiods={
+            k: {
+                "cagr": v["strategy"]["cagr"],
+                "benchmark_cagr": v["benchmark"]["cagr"],
+                "worst_12m": v["strategy"]["worst_rolling_12m_return"],
+                "excess_interval": v["excess_vs_benchmark"].get("interval"),
+            }
+            for k, v in artifact["subperiods"].items()
+        },
         validation=validation,
         sensitivity=artifact["sensitivity"],
         deflated_sharpe=mt["deflated_sharpe"],

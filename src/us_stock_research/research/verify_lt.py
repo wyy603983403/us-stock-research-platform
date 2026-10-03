@@ -22,6 +22,8 @@ def backtest(
     yields_pct: list[float | None],
 ) -> dict[tuple[int, int], float]:
     rule, data = contract["rule"], contract["data"]
+    if "vol_target" in rule:
+        return backtest_vol_target(contract, days, prices, yields_pct)
     n_sma = int(rule["sma_days"])
     lev = float(rule["leverage"])
     cost = float(rule["switch_cost_bps"]) / 10_000
@@ -53,6 +55,58 @@ def backtest(
             continue
         key = (today.year, today.month)
         growth[key] = growth.get(key, 1.0) * (1 + day_ret)
+    return {k: v - 1 for k, v in growth.items()}
+
+
+def backtest_vol_target(
+    contract: dict[str, Any],
+    days: list[date],
+    prices: list[float],
+    yields_pct: list[float | None],
+) -> dict[tuple[int, int], float]:
+    """Volatility-target variant, from the contract text: statistics.stdev over a deque."""
+    import statistics
+
+    rule, data = contract["rule"], contract["data"]
+    n_sma, n_vol = int(rule["sma_days"]), int(rule["vol_window_days"])
+    goal, cap = float(rule["vol_target"]), float(rule["max_leverage"])
+    band, bps = float(rule["rebalance_band"]), float(rule["trading_cost_bps"]) / 10_000
+    closes: deque[float] = deque(maxlen=n_sma)
+    moves: deque[float] = deque(maxlen=n_vol)
+    wanted: dict[date, float] = {}
+    for i, (d, p) in enumerate(zip(days, prices, strict=True)):
+        if i:
+            moves.append(p / prices[i - 1] - 1)
+        closes.append(p)
+        if len(closes) < n_sma or len(moves) < n_vol:
+            continue
+        if p <= sum(closes) / n_sma:
+            wanted[d] = 0.0
+        else:
+            vol = statistics.stdev(moves) * 252**0.5
+            wanted[d] = cap if vol == 0 else min(cap, goal / vol)
+    growth: dict[tuple[int, int], float] = {}
+    exposure: float | None = None
+    for k in range(2, len(days)):
+        if days[k - 2] not in wanted or yields_pct[k - 1] is None:
+            continue
+        aim = wanted[days[k - 2]]
+        fee = 0.0
+        if exposure is None:
+            exposure = aim
+        elif (aim == 0) != (exposure == 0) or abs(aim - exposure) > band:
+            fee = abs(aim - exposure) * bps
+            exposure = aim
+        y = float(yields_pct[k - 1]) / 100  # type: ignore[arg-type]
+        move = prices[k] / prices[k - 1] - 1
+        if exposure <= 1:
+            day_ret = exposure * move + (1 - exposure) * y / 252
+        else:
+            day_ret = exposure * move - (exposure - 1) * (y + 0.005 + 0.009) / 252
+        day_ret = (1 + day_ret) * (1 - fee) - 1
+        if data["start"] <= days[k] <= data["end"]:
+            key = (days[k].year, days[k].month)
+            growth[key] = growth.get(key, 1.0) * (1 + day_ret)
     return {k: v - 1 for k, v in growth.items()}
 
 

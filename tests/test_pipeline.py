@@ -1887,3 +1887,40 @@ def test_long_history_total_return_and_dividend_yield_table() -> None:
                "strategy": {"worst_rolling_12m_return": -0.3}}  # fmt: skip
     assert lt.evaluate(hist, summary, 0.99, {"annualized_diff": 0.004}) == []
     assert "全收益" in lt.evaluate(hist, summary, 0.99, {"annualized_diff": 0.006})[0]
+
+
+def test_volatility_target_engine_matches_independent() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import leveraged_trend as lt
+    from us_stock_research.research import verify_lt as vl
+
+    days = trading_days(date(2000, 1, 3), date(2005, 12, 30))
+    rng = random.Random(21)
+    prices, p = [], 100.0
+    for i in range(len(days)):
+        calm = (i // 300) % 2 == 0
+        p *= 1 + rng.gauss(0.0007 if calm else -0.0005, 0.007 if calm else 0.02)
+        prices.append(p)
+    yields = lt.forward_fill(days, {d: 2.0 + (i % 5) * 0.2 for i, d in enumerate(days[3::11])})
+    c = {
+        "name": "vt",
+        "data": {"start": date(2001, 1, 1), "end": date(2005, 6, 30)},
+        "rule": {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25,
+                 "max_leverage": 2.0, "rebalance_band": 0.25, "trading_cost_bps": 10},
+        "inference": {"resamples": 200, "block_size_months": 6, "confidence_level": 0.95,
+                      "random_seed": 1},
+        "risk": {"max_worst_12m_loss": 0.5},
+    }  # fmt: skip
+    res = lt.run(c, days, prices, yields)
+    check = vl.compare(res, vl.backtest(c, days, prices, yields))
+    assert check["match"], check
+    sim = lt.simulate_vol_target(days, prices, yields, sma_days=200, vol_window=20,
+                                 vol_target=0.25, max_leverage=2.0, band=0.25,
+                                 cost_bps=10)  # fmt: skip
+    exposures = {row[3] for row in sim}
+    assert 0.0 in exposures and 2.0 in exposures and any(0 < e < 2 for e in exposures)
+    assert 0 < res["average_exposure"] < 2
+    sub_ = lt.run(c, days, prices, yields, start=date(2002, 1, 1), end=date(2002, 12, 31))
+    assert sub_["months"][0] == "2002-01" and len(sub_["months"]) == 12
