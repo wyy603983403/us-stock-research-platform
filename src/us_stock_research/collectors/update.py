@@ -85,6 +85,13 @@ def update_symbol(
     }
 
 
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return isinstance(exc, httpx.TransportError)
+
+
 def run_update(
     symbols: list[str],
     store: BarStore,
@@ -96,14 +103,35 @@ def run_update(
     pause: float,
     sleep: Callable[[float], None] = time.sleep,
     exceptions: Path | None = None,
+    retries: int = 3,
+    backoff: float = 30.0,
+    retry_budget: float = 600.0,
 ) -> dict[str, Any]:
+    """``retries``: extra attempts after HTTP 429 / 5xx / network errors, waiting backoff × 3^n;
+    total waiting per run is capped by ``retry_budget`` seconds (a blocked source must not stall
+    a 600-symbol update)."""
     results: list[dict[str, Any]] = []
     failed: dict[str, str] = {}
+    retried: dict[str, int] = {}
+    waited = 0.0
     for symbol in symbols:
-        try:
-            results.append(update_symbol(symbol, store, fetch, today, full_start, execute=execute))
-        except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-            failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+        attempt = 0
+        while True:
+            try:
+                results.append(
+                    update_symbol(symbol, store, fetch, today, full_start, execute=execute)
+                )
+                break
+            except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+                wait = backoff * 3**attempt
+                if _transient(exc) and attempt < retries and waited + wait <= retry_budget:
+                    sleep(wait)
+                    waited += wait
+                    attempt += 1
+                    retried[symbol] = attempt
+                    continue
+                failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+                break
         sleep(pause)
     accepted, quarantine = load_exceptions(exceptions) if exceptions else ({}, {})
     audited = {
@@ -120,6 +148,8 @@ def run_update(
         "appended_days": sum(r["new_days"] for r in results if r["action"] == "append"),
         "quality_errors": {s: a.errors[:3] for s, a in audited.items() if a.errors},
         "failed": failed,
+        "retried": retried,
+        "retry_wait_seconds": waited,
         # the source did not deliver the latest session (throttling, stale cache, halted stock)
         "behind": sorted(r["symbol"] for r in results if r["last"] < today.isoformat()),
         "symbols": len(symbols),
@@ -131,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("symbols", nargs="*", help="default: every symbol in the store")
     parser.add_argument("--full-start", type=date.fromisoformat, default=date(2000, 1, 1))
     parser.add_argument("--pause", type=float, default=0.5)
+    parser.add_argument("--retries", type=int, default=3, help="extra attempts on 429/5xx")
+    parser.add_argument("--retry-budget", type=float, default=600.0, help="max seconds of waiting")
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     parser.add_argument("--report", type=Path, help="write the JSON summary here too")
     parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
@@ -152,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
             execute=args.execute,
             pause=args.pause,
             exceptions=args.exceptions,
+            retries=args.retries,
+            retry_budget=args.retry_budget,
         )
     summary = {"dry_run": not args.execute, "date": today.isoformat(), **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)

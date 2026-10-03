@@ -2165,3 +2165,35 @@ def test_sleeve_mix_matches_independent_and_costs() -> None:
     assert abs(held[-1][1] - (gld[-1] / gld[-2] - 1)) < 1e-15
     test = sm.paired_sharpe_bootstrap(list(mix.values()), list(mix.values()), 200, 6, 0.95, 1)
     assert test["interval"] == [0.0, 0.0] and test["sharpe_difference"] == 0.0
+
+
+def test_update_retries_throttling_within_budget(tmp_path: Path) -> None:
+    import httpx
+    from conftest import synthetic_bars
+
+    from us_stock_research.collectors.update import run_update
+    from us_stock_research.storage import CsvStore
+
+    store = CsvStore(tmp_path)
+    bars = synthetic_bars(date(2026, 9, 1), 20, 0.001, 0.01, 0.0)
+    for sym in ("OK", "BAD", "SLOW"):
+        store.write_bars(sym, bars)
+        store.write_dividends(sym, {})
+    calls: dict[str, int] = {}
+    req = httpx.Request("GET", "https://example.test")
+
+    def fetch(symbol: str, a: date, b: date):  # type: ignore[no-untyped-def]
+        calls[symbol] = calls.get(symbol, 0) + 1
+        code = 429 if symbol != "BAD" else 404
+        if symbol == "OK" and calls[symbol] >= 3:
+            return [b for b in bars if b.day >= a], {}
+        raise httpx.HTTPStatusError("x", request=req, response=httpx.Response(code, request=req))
+
+    waits: list[float] = []
+    out = run_update(["OK", "BAD", "SLOW"], store, fetch, date(2026, 10, 2), date(2000, 1, 1),
+                     execute=False, pause=0.0, sleep=waits.append, retries=3, backoff=30.0,
+                     retry_budget=200.0)  # fmt: skip
+    assert calls == {"OK": 3, "BAD": 1, "SLOW": 2}  # 404 is not retried; budget stops SLOW
+    assert [w for w in waits if w] == [30.0, 90.0, 30.0]
+    assert out["retried"] == {"OK": 2, "SLOW": 1} and "SLOW" in out["failed"]
+    assert out["retry_wait_seconds"] == 150.0
