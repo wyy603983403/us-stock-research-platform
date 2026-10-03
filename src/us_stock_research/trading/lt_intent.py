@@ -166,6 +166,9 @@ def generate(
     }
 
 
+SIDE_CN = {"BUY": "买入", "SELL": "卖出", "buy": "买入", "sell": "卖出"}
+
+
 def main(argv: list[str] | None = None) -> int:
     from us_stock_research.config import load_settings
     from us_stock_research.quality.ohlcv import audit_bars
@@ -244,6 +247,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         + f"目标 {' '.join(f'{s} {w:.0%}' for s, w in intent['target_weights'].items())}，"
         f"订单 {len(intent['orders'])} 笔"
+        + (
+            "："
+            + "；".join(
+                f"{SIDE_CN.get(o['side'], o['side'])} {o['symbol']} {o['shares']} 股"
+                f"（参考价 {o['ref_price']:.2f}，约 ${o['est_value_usd']:,.0f}）"
+                for o in intent["orders"]
+            )
+            if intent["orders"]
+            else ""
+        )
         + (f"，只减仓：{intent['reduce_only_reasons'][0]}" if intent["reduce_only"] else "")
     )
     return 0
