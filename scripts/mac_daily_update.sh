@@ -122,6 +122,8 @@ else
   case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：${LT_OUT}";; *) NOTE="订单生成异常：${LT_OUT}";; esac
   case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：${LT_OUT}";; esac
   [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
+  # 同时推到手机（.env 配了 FEISHU_WEBHOOK / NTFY_TOPIC / BARK_KEY 才发）
+  [ -n "$NOTE" ] && bash scripts/notify.sh "美股交易系统 $LASTDAY" "$NOTE" >/dev/null 2>&1
   if [ -n "$NOTE" ] && command -v osascript >/dev/null; then
     MSG=$(printf '%s' "$NOTE" | cut -c1-200 | tr '"' "'")
     osascript -e "display notification \"$MSG\" with title \"美股交易系统\"" 2>/dev/null || true

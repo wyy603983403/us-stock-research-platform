@@ -32,9 +32,19 @@ if ! "${SSH[@]}" "test -f /opt/usr-trade/.env"; then
     echo "USR_STORAGE_ROOT=/opt/usr-trade/data"; } \
     | "${SSH[@]}" "umask 077; cat > /opt/usr-trade/.env"
 fi
+# 飞书机器人：Mac 的 .env 里有、服务器上还没有（或已改）的，同步过去
+for k in FEISHU_WEBHOOK FEISHU_SECRET; do
+  v=$(grep -E "^$k=" .env 2>/dev/null | head -n1 | cut -d= -f2- || true)
+  [ -n "$v" ] || continue
+  printf '%s=%s\n' "$k" "$v" | "${SSH[@]}" "umask 077; f=/opt/usr-trade/.env; t=\$(mktemp); \
+    grep -v '^$k=' \$f > \$t; cat >> \$t; cat \$t > \$f; rm -f \$t"
+  echo "  已同步 $k"
+done
 
 echo "== 4/4 服务器端安装（环境、数据、定时任务、通知）"
 "${SSH[@]}" "bash $APP/scripts/server_setup.sh"
 # 从此由服务器运行“均线 + 波动率目标”，Mac 的每日更新不再重复出单/记账（删掉这个文件即恢复）
 mkdir -p portfolio && echo "$HOST $(date '+%F %T')" > portfolio/.vt_on_server
 echo "Mac 端已停止该策略的出单与记账（标记文件 portfolio/.vt_on_server）"
+echo "== 发一条测试通知"
+"${SSH[@]}" "cd $APP && sudo -u usrtrade bash scripts/notify.sh --test 2>&1 || bash scripts/notify.sh --test"
