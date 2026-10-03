@@ -1,0 +1,20 @@
+# 云服务器运行交易流水线（2026-10-03）
+
+研究数据和回测留在 Mac；美国云服务器只跑已批准策略 `sp500_trend_voltarget` 的每日流水线，
+只下载 SPY、SSO、BIL 日线和 FRED 利率（几 MB）。
+
+部署（在 Mac 项目目录，可重复运行）：
+
+    bash scripts/server_deploy.sh root@43.135.185.94 ~/.ssh/evunea_deploy_ed25519
+
+- 代码在 `/opt/usr-trade/app`，订单/账本/日志/状态页在 `/opt/usr-trade/state`，数据在 `/opt/usr-trade/data`，
+  密钥 `/opt/usr-trade/.env`（600 权限；首次部署从 Mac 的 .env 只带 `ALPACA_*` 与 `SEC_USER_AGENT`）。
+- 以系统用户 `usrtrade` 运行；systemd 定时器 `usr-trade.timer`：纽约时间周一至周五 21:15，23:45 再补一次（错过的开机补跑），
+  都在 Alpaca 收盘竞价单的接收窗口内。
+- 通知：ntfy.sh（部署时生成随机频道，手机装 ntfy App 订阅即可；或在 .env 加 `BARK_KEY` 用 Bark）。每个交易日一条简报，
+  有订单/只减仓/需要关注时另发。
+- 部署成功后 Mac 写入 `portfolio/.vt_on_server`，Mac 的每日更新不再为该策略出单/记账（删除该文件即恢复）。
+  ETF 趋势基线演练仍在 Mac。
+
+常用：`systemctl start usr-trade.service`（立即运行）、`journalctl -u usr-trade -n 80`、`cat /opt/usr-trade/state/artifacts/status.md`、
+`systemctl list-timers usr-trade.timer`。

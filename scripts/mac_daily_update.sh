@@ -87,42 +87,44 @@ if [ -n "$ASOF" ] && [ ! -f "orders/etf_trend_baseline/${ASOF}.json" ]; then
   .venv/bin/usr-order-intent --contract research/etf-trend-baseline/study.yml --as-of "$ASOF" $HOLD \
     | tail -n 3 || echo "  生成失败"
 fi
-# 每个交易日：SPY 200 日均线 + 2 倍杠杆的演练（先按今天收盘记昨天的订单，再按今天收盘出新订单）
-LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime
-from us_stock_research.quality.intraday import last_closed_session
-print(last_closed_session(datetime.now(UTC)).isoformat())")
-echo "== 均线 + 波动率目标（已批准，${LASTDAY}，只写文件）"
-.venv/bin/usr-rehearsal-fill --study sp500_trend_voltarget --cost-bps 10 2>&1 | tail -n 3 \
-  || echo "  演练记账失败"
-LT_LEDGER=portfolio/rehearsal/sp500_trend_voltarget.yml
-PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))" 2>/dev/null)
-if [ "$PAPER_ON" = "True" ]; then
-  # 阶段 2：持仓以 Alpaca 模拟账户为准（先对账，不一致则不发新单）
-  echo "== 模拟盘（Alpaca paper）对账"
-  .venv/bin/usr-paper --sync 2>&1 | tail -n 5
-  LT_LEDGER=portfolio/paper/sp500_trend_voltarget.yml
-fi
-LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
-# 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
-LT_OUT=$(.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
-  --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
-  | tail -n 1) || LT_OUT="生成失败"
-echo "  $LT_OUT"
-if [ "$PAPER_ON" = "True" ]; then
-  echo "== 模拟盘下单（收盘竞价单，次日收盘成交）"
-  .venv/bin/usr-paper --submit 2>&1 | tail -n 12
-fi
-echo "== 状态（artifacts/status.md）"
-ST_OUT=$(.venv/bin/usr-status --contract research/sp500-trend-voltarget/study.yml --holdings "$LT_LEDGER" \
-  --update-report "artifacts/universe/update_${STAMP}.json" 2>&1); ST_RC=$?
-echo "$ST_OUT" | sed 's/^/  /'
-# 有新订单、只减仓、生成失败或状态需要关注时，在 Mac 上弹通知
-NOTE=""
-case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：${LT_OUT}";; *) NOTE="订单生成异常：${LT_OUT}";; esac
-case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：${LT_OUT}";; esac
-[ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
-if [ -n "$NOTE" ] && command -v osascript >/dev/null; then
-  MSG=$(printf '%s' "$NOTE" | cut -c1-200 | tr '"' "'")
-  osascript -e "display notification \"$MSG\" with title \"美股交易系统\"" 2>/dev/null || true
+if [ -f portfolio/.vt_on_server ]; then
+  echo "== 均线 + 波动率目标：由云服务器运行（$(cat portfolio/.vt_on_server)），Mac 不重复出单"
+else
+  # 每个交易日：SPY 200 日均线 + 2 倍杠杆的演练（先按今天收盘记昨天的订单，再按今天收盘出新订单）
+  LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime; from us_stock_research.quality.intraday import last_closed_session as f; print(f(datetime.now(UTC)).isoformat())")
+  echo "== 均线 + 波动率目标（已批准，${LASTDAY}，只写文件）"
+  .venv/bin/usr-rehearsal-fill --study sp500_trend_voltarget --cost-bps 10 2>&1 | tail -n 3 \
+    || echo "  演练记账失败"
+  LT_LEDGER=portfolio/rehearsal/sp500_trend_voltarget.yml
+  PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))" 2>/dev/null)
+  if [ "$PAPER_ON" = "True" ]; then
+    # 阶段 2：持仓以 Alpaca 模拟账户为准（先对账，不一致则不发新单）
+    echo "== 模拟盘（Alpaca paper）对账"
+    .venv/bin/usr-paper --sync 2>&1 | tail -n 5
+    LT_LEDGER=portfolio/paper/sp500_trend_voltarget.yml
+  fi
+  LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
+  # 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
+  LT_OUT=$(.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
+    --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
+    | tail -n 1) || LT_OUT="生成失败"
+  echo "  $LT_OUT"
+  if [ "$PAPER_ON" = "True" ]; then
+    echo "== 模拟盘下单（收盘竞价单，次日收盘成交）"
+    .venv/bin/usr-paper --submit 2>&1 | tail -n 12
+  fi
+  echo "== 状态（artifacts/status.md）"
+  ST_OUT=$(.venv/bin/usr-status --contract research/sp500-trend-voltarget/study.yml --holdings "$LT_LEDGER" \
+    --update-report "artifacts/universe/update_${STAMP}.json" 2>&1); ST_RC=$?
+  echo "$ST_OUT" | sed 's/^/  /'
+  # 有新订单、只减仓、生成失败或状态需要关注时，在 Mac 上弹通知
+  NOTE=""
+  case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：${LT_OUT}";; *) NOTE="订单生成异常：${LT_OUT}";; esac
+  case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：${LT_OUT}";; esac
+  [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
+  if [ -n "$NOTE" ] && command -v osascript >/dev/null; then
+    MSG=$(printf '%s' "$NOTE" | cut -c1-200 | tr '"' "'")
+    osascript -e "display notification \"$MSG\" with title \"美股交易系统\"" 2>/dev/null || true
+  fi
 fi
 echo "完成 $(date '+%Y-%m-%d %H:%M')"

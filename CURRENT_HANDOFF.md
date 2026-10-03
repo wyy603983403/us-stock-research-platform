@@ -57,5 +57,6 @@
 24. 阶段 2 券商：用户 2026-10-03 决定先用 Alpaca 模拟账户。`usr-paper`（只连 paper 地址、独立密钥、对账、去重、收盘竞价单）已写好；
     `configs/paper_broker.yml` enabled=false，阶段 1 通过后由用户打开；定时任务已改为北京 10:05、13:05（雅虎数据到这时才齐，也在 MOC 窗口内）。
 25. 监控 `usr-status`（净值历史、artifacts/status.md、与模型偏差）+ Mac 系统通知；阶段门槛 `configs/stage_gates.yml`（2026-10-03 定）。
-26. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+26. 云服务器（43.135.185.94）部署脚本 `scripts/server_deploy.sh` / `server_setup.sh` / `server_daily.sh` / `notify.sh`，说明见 docs/server.md。
+27. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。
