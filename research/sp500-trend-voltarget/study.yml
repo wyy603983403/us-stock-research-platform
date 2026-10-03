@@ -1,0 +1,61 @@
+# 预先登记（2026-10-03，在计算任何收益之前写定）。改参数 = 新版本研究。
+# 背景：2 倍杠杆趋势规则在 2001–2025 与 1955–2000 两段都跑赢但不显著，且 1987 年单月 −54.7% 突破 50% 上限。
+# 本研究在同一趋势开关上加“波动率目标”：市场越动荡，杠杆越低。这是看过上述结果后提出的新规则，必须如实计入多重检验。
+schema_version: 1
+kind: leveraged_trend
+name: sp500_trend_voltarget
+status: registered
+registered_at: 2026-10-03
+question: >
+  标普 500 在 200 日均线上方时，按“目标波动率 25% ÷ 最近 20 日实际波动率”决定仓位（最高 2 倍），下方时持有国库券；
+  1955–2025 年扣除融资、费率和交易成本后，能否显著跑赢持有标普 500，且最差 12 个月亏损不超过 50%？
+hypothesis: >
+  波动率有持续性，高波动时期的风险调整收益更差（Moreira & Muir 2017, “Volatility-Managed Portfolios”；
+  Harvey et al. 2018, “The Impact of Volatility Targeting”）。平静上涨时加杠杆、动荡时降杠杆，可以保留趋势规则避开长熊市
+  的好处，同时减少震荡市和崩盘前夕的杠杆损失。主检验：相对标普 500 全收益的月均超额收益 95% 置信区间下限 > 0。
+data:
+  signal_and_asset: ^GSPC
+  total_return: price_plus_monthly_dividend_yield
+  dividend_yield: SP500_DIVYIELD
+  cash_rate: DTB3
+  start: 1955-01-01                       # 一个连续长样本；2001–2025 用的也是同一构造（已验证与 SPY 年化差 0.07%）
+  end: 2025-12-31
+rule:
+  sma_days: 200
+  signal: 全收益收盘价 > 200 日简单均线（含当日）
+  execution_lag_days: 1                   # 信号日次日收盘调整到目标仓位
+  vol_target: 0.25                        # 年化
+  vol_window_days: 20                     # 最近 20 个日收益的样本标准差 × √252（含信号日）
+  max_leverage: 2.0
+  exposure: 趋势向上时 min(2.0, 0.25 / 实际波动率)；趋势向下时 0（全部国库券）
+  rebalance_band: 0.25                    # 目标仓位与当前仓位相差超过 0.25 倍（或趋势状态改变）才调整
+  daily_return: >
+    敞口 E ≤ 1：E × 日收益 + (1 − E) × 国债日利率；
+    E > 1：E × 日收益 − (E − 1) × (国债利率 + 0.50%) / 252 − (E − 1) × 0.90% / 252
+    （国债利率用前一日值；0.9% 为杠杆 ETF 费率，按超出 1 倍的部分计）
+  trading_cost_bps: 10                    # 每次调整按 |敞口变化| × 净值 × 10 bp
+benchmark:
+  primary: 标普 500 全收益（同上构造）
+inference:
+  frequency: calendar_month
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261005
+risk:
+  max_worst_12m_loss: 0.50
+success_criteria:
+  - 相对标普 500 全收益的月均超额收益（按自然月），95% 置信区间下限 > 0
+  - 最差滚动 12 个月亏损不超过 50%
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验）
+  - 数据验证：1994–2025 年全收益构造与 SPY 复权价的年化差异在 ±0.5% 以内
+reporting:                                # 只报告，不参与晋级
+  subperiods: [[1955-01-01, 2000-12-31], [2001-01-01, 2025-12-31]]
+  sensitivity_vol_target: [0.20, 0.30]
+limitations:
+  - 看过 2 倍杠杆两段结果之后提出，并非独立于结果的想法；25% 目标、20 日窗口、0.25 调整带是常见取值，未在本数据上优化
+  - 波动率目标对“毫无预兆的单日崩盘”帮助有限；1987 年 10 月 19 日前一周波动已上升，能降多少要看结果
+  - 1955–2000 没有杠杆 ETF，成本按今天的假设
+human_review:
+  approved: false
