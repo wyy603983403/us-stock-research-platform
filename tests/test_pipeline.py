@@ -2075,3 +2075,33 @@ def test_daily_status_tracks_model_and_flags_attention(tmp_path: Path) -> None:
     joined = " ".join(s2["attention"])
     assert "BIL stale" in joined and "偏差" in joined and "熔断" in joined
     assert "交易系统状态" in st.render(s2, h, "演练账本")
+
+
+def test_dashboard_page_renders_series_and_escapes_data(tmp_path: Path) -> None:
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.trading import status as st
+    from us_stock_research.trading.dashboard import render_html
+
+    days = trading_days(date(2025, 1, 2), date(2026, 9, 30))
+    closes = [100 + i * 0.1 for i in range(len(days))]
+    rule = {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25, "max_leverage": 2.0,
+            "rebalance_band": 0.25, "trading_cost_bps": 10}  # fmt: skip
+    nav = [(days[-3], 100_000.0, 2.0), (days[-2], 100_500.0, 2.0), (days[-1], 101_000.0, 2.0)]
+    series = st.chart_series(rule, days, closes, [4.0] * len(days), nav)
+    assert len(series["curves"]) == 3 and series["curves"][0]["portfolio"] == 100.0
+    assert series["curves"][0]["model"] == 100.0 and len(series["signal_series"]) == 260
+    assert series["signal_series"][-1]["sma"] is not None
+    payload = {"day": "2026-09-30", "source": "演练账本", "generated_at": "2026-10-01T00:00",
+               "signal": {"close": 1.0, "sma": 1.0, "distance_to_sma": 0.0, "target_exposure": 2.0,
+                          "current_exposure": 2.0, "trend_on": True},
+               "portfolio": {"nav": 1.0, "peak": 1.0, "drawdown": 0.0, "breaker": 0.4},
+               "tracking": None, "attention": ["</script><b>x"], **series}  # fmt: skip
+    page = render_html(payload)
+    assert "__DATA__" not in page and "</script><b>" not in page and "<\\/script>" in page
+    folder = tmp_path / "orders"
+    folder.mkdir()
+    (folder / "2026-09-30.json").write_text(
+        '{"signal_day": "2026-09-30", "mode": "live-candidate", "orders": [{"side": "BUY", '
+        '"symbol": "SSO", "shares": 3, "ref_price": 70.0, "est_value_usd": 210.0}]}'
+    )
+    assert st.recent_orders(folder)[0]["symbol"] == "SSO"

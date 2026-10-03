@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="900">
+<title>交易系统监控</title>
+<style>
+:root{color-scheme:light;
+ --page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
+ --grid:#e1e0d9;--axis:#c3c2b7;--ring:rgba(11,11,11,.10);
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;
+ --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--goodtext:#006300}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+ --page:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--muted:#898781;
+ --grid:#2c2c2a;--axis:#383835;--ring:rgba(255,255,255,.10);
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--goodtext:#0ca30c}}
+:root[data-theme="dark"]{color-scheme:dark;
+ --page:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--muted:#898781;
+ --grid:#2c2c2a;--axis:#383835;--ring:rgba(255,255,255,.10);
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--goodtext:#0ca30c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);
+ font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:1120px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;justify-content:space-between}
+h1{font-size:20px;margin:0}
+h2{font-size:15px;margin:0 0 8px}
+.sub{color:var(--ink2);font-size:13px}
+.banner{margin:14px 0 18px;padding:12px 14px;border-radius:10px;background:var(--surface);
+ box-shadow:0 0 0 1px var(--ring);display:flex;gap:10px;align-items:flex-start}
+.badge{display:inline-flex;align-items:center;gap:6px;font-weight:600;white-space:nowrap}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.tile,.card{background:var(--surface);border-radius:10px;box-shadow:0 0 0 1px var(--ring);padding:14px}
+.tile .k{color:var(--ink2);font-size:12px}
+.tile .v{font-size:24px;font-weight:600;margin-top:2px}
+.tile .n{color:var(--muted);font-size:12px;margin-top:2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+.card{margin-bottom:12px;position:relative}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--ink2);font-size:12px;margin:-2px 0 6px}
+.key{display:inline-flex;align-items:center;gap:6px}
+.key i{width:14px;height:2px;border-radius:1px;display:inline-block}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.tip{position:absolute;pointer-events:none;background:var(--surface);color:var(--ink);
+ box-shadow:0 0 0 1px var(--ring),0 4px 14px rgba(0,0,0,.12);border-radius:8px;padding:8px 10px;
+ font-size:12px;display:none;min-width:150px;z-index:5}
+.tip .d{color:var(--ink2);margin-bottom:4px}
+.tip .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.tip .row b{font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+.scroll{overflow-x:auto}
+@media (max-width:480px){.tile .v{font-size:20px}}
+th{color:var(--ink2);font-weight:500}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+details{margin-top:8px}
+summary{cursor:pointer;color:var(--ink2);font-size:12px}
+.empty{color:var(--muted);padding:18px 0;text-align:center}
+ul.att{margin:0;padding-left:18px}
+.footer{color:var(--muted);font-size:12px;margin-top:20px}
+</style>
+</head>
+<body>
+<main>
+<header>
+ <h1>交易系统监控 · 均线 + 波动率目标</h1>
+ <div class="sub" id="meta"></div>
+</header>
+<div class="banner" id="banner"></div>
+<section class="tiles" id="tiles"></section>
+<section class="card"><h2>净值走势（起点 = 100）</h2><div class="legend" id="lg-curves"></div>
+ <div id="ch-curves"></div><details><summary>数据表</summary><div id="tb-curves"></div></details></section>
+<section class="grid2">
+ <div class="card"><h2>仓位（倍数）</h2><div id="ch-exposure"></div>
+  <details><summary>数据表</summary><div id="tb-exposure"></div></details></div>
+ <div class="card"><h2>SPY 与 200 日均线（近一年）</h2><div class="legend" id="lg-signal"></div>
+  <div id="ch-signal"></div><details><summary>数据表</summary><div id="tb-signal"></div></details></div>
+</section>
+<section class="grid2">
+ <div class="card"><h2>最近订单</h2><div id="orders"></div></div>
+ <div class="card"><h2>持仓</h2><div id="holdings"></div></div>
+</section>
+<p class="footer">只生成订单文件或模拟单，不涉及真钱。页面每 15 分钟自动刷新；数据在每个交易日收盘后更新。</p>
+</main>
+<div class="tip" id="tip"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const S = JSON.parse(document.getElementById('data').textContent);
+const $ = id => document.getElementById(id);
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text; return e; };
+const pct = (x, d = 1) => (x >= 0 ? '+' : '') + (x * 100).toFixed(d) + '%';
+const usd = x => '$' + Number(x).toLocaleString('en-US', {maximumFractionDigits: 0});
+
+// meta + banner
+$('meta').textContent = `数据日 ${S.day} · ${S.source} · 生成于 ${S.generated_at.replace('T', ' ').slice(0, 16)} UTC`;
+const bad = (S.attention || []).length > 0;
+const b = $('banner');
+const badge = el('span', {class: 'badge'});
+const dot = el('span', {class: 'dot'}); dot.style.background = bad ? 'var(--serious)' : 'var(--good)';
+badge.append(dot, document.createTextNode(bad ? '⚠ 需要关注' : '✓ 运行正常'));
+const msg = el('div');
+if (bad) { const ul = el('ul', {class: 'att'}); S.attention.forEach(a => ul.append(el('li', {}, a))); msg.append(ul); }
+else msg.append(document.createTextNode('信号、数据、风险限额均无异常。'));
+b.append(badge, msg);
+
+// tiles
+const sig = S.signal, pf = S.portfolio, tr = S.tracking;
+const tiles = [
+  ['净值', pf ? usd(pf.nav) : '—', pf ? `最高 ${usd(pf.peak)}` : ''],
+  ['回撤', pf ? pct(pf.drawdown) : '—', pf ? `熔断线 −${(pf.breaker * 100).toFixed(0)}%` : ''],
+  ['目标 / 当前仓位', `${sig.target_exposure.toFixed(2)} / ${sig.current_exposure.toFixed(2)} 倍`,
+   sig.trend_on ? '趋势向上' : '趋势向下：持有国库券'],
+  ['SPY 距 200 日均线', pct(sig.distance_to_sma), `收盘 ${sig.close.toFixed(2)} · 均线 ${sig.sma.toFixed(2)}`],
+  ['与研究模型偏差', tr ? pct(tr.gap, 2) : '—', tr ? `自 ${tr.since}` : '首笔成交后开始计算'],
+];
+for (const [k, v, n] of tiles) { const t = el('div', {class: 'tile'});
+  t.append(el('div', {class: 'k'}, k), el('div', {class: 'v'}, v), el('div', {class: 'n'}, n)); $('tiles').append(t); }
+
+// generic line chart with crosshair tooltip
+const NS = 'http://www.w3.org/2000/svg';
+const sv = (tag, attrs) => { const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+function niceTicks(lo, hi, n = 4) {
+  const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function lineChart(host, rows, series, opts = {}) {
+  if (!rows.length) { host.append(el('div', {class: 'empty'}, '暂无数据（首笔成交记账后开始）')); return; }
+  host.replaceChildren();
+  const W = Math.max(280, host.clientWidth || 600), H = opts.h || 240;
+  const L = 46, R = opts.direct === false ? 12 : 76, T = 10, B = 24;
+  const vals = rows.flatMap(r => series.map(s => r[s.key])).filter(v => v !== null && v !== undefined);
+  let lo = opts.min !== undefined ? opts.min : Math.min(...vals), hi = opts.max !== undefined ? opts.max : Math.max(...vals);
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.06; if (opts.min === undefined) lo -= pad; if (opts.max === undefined) hi += pad;
+  const x = i => L + (rows.length === 1 ? (W - L - R) / 2 : i / (rows.length - 1) * (W - L - R));
+  const y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const svg = sv('svg', {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': opts.label || ''});
+  for (const v of (opts.ticks || niceTicks(lo, hi))) {
+    svg.append(sv('line', {x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: 'var(--grid)', 'stroke-width': 1}));
+    const t = sv('text', {x: L - 6, y: y(v) + 4, 'text-anchor': 'end'}); t.textContent = opts.fmt ? opts.fmt(v) : String(v); svg.append(t); }
+  svg.append(sv('line', {x1: L, x2: W - R, y1: H - B, y2: H - B, stroke: 'var(--axis)', 'stroke-width': 1}));
+  const ticks = Math.min(Math.max(2, Math.floor((W - L - R) / 90)), rows.length);
+  for (let k = 0; k < ticks; k++) { const i = Math.round(k * (rows.length - 1) / Math.max(ticks - 1, 1));
+    const t = sv('text', {x: x(i), y: H - 6, 'text-anchor': k === 0 ? 'start' : (k === ticks - 1 ? 'end' : 'middle')});
+    t.textContent = rows[i].d.slice(2).replaceAll('-', '/'); svg.append(t); }
+  for (const s of series) {
+    let dpath = '', pen = false;
+    rows.forEach((r, i) => { const v = r[s.key]; if (v === null || v === undefined) { pen = false; return; }
+      dpath += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); pen = true; });
+    svg.append(sv('path', {d: dpath, fill: 'none', stroke: s.color, 'stroke-width': 2,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...(s.step ? {} : {})}));
+    const last = [...rows].reverse().find(r => r[s.key] !== null && r[s.key] !== undefined);
+    if (last && opts.direct !== false) { const t = sv('text', {x: W - R + 6, y: y(last[s.key]) + 4});
+      t.textContent = s.name; t.style.fill = 'var(--ink2)'; svg.append(t); }
+  }
+  const cross = sv('line', {y1: T, y2: H - B, stroke: 'var(--axis)', 'stroke-width': 1, visibility: 'hidden'});
+  svg.append(cross);
+  const hit = sv('rect', {x: L, y: T, width: W - L - R, height: H - T - B, fill: 'transparent', tabindex: 0});
+  svg.append(hit); host.append(svg);
+  const tip = $('tip');
+  const show = (i, cx, cy) => { const r = rows[i]; cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible'); tip.replaceChildren(el('div', {class: 'd'}, r.d));
+    for (const s of series) { if (r[s.key] === null || r[s.key] === undefined) continue;
+      const row = el('div', {class: 'row'}); const key = el('span', {class: 'key'}); const i2 = el('i'); i2.style.background = s.color;
+      key.append(i2, document.createTextNode(s.name)); row.append(key, el('b', {}, (opts.tipFmt || (v => v.toFixed(2)))(r[s.key])));
+      tip.append(row); }
+    tip.style.display = 'block'; tip.style.left = Math.min(cx + 14, innerWidth - tip.offsetWidth - 8) + 'px';
+    tip.style.top = (cy + 14 + scrollY) + 'px'; };
+  const idx = ev => { const box = svg.getBoundingClientRect(); const px = (ev.clientX - box.left) / box.width * W;
+    return Math.max(0, Math.min(rows.length - 1, Math.round((px - L) / (W - L - R) * (rows.length - 1)))); };
+  hit.addEventListener('pointermove', ev => show(idx(ev), ev.clientX, ev.clientY));
+  hit.addEventListener('pointerleave', () => { tip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); });
+  let kb = rows.length - 1;
+  hit.addEventListener('keydown', ev => { if (ev.key === 'ArrowLeft') kb = Math.max(0, kb - 1);
+    else if (ev.key === 'ArrowRight') kb = Math.min(rows.length - 1, kb + 1); else return;
+    const box = svg.getBoundingClientRect(); show(kb, box.left + x(kb) / W * box.width, box.top + 20); });
+  hit.addEventListener('blur', () => { tip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); });
+}
+function legend(host, series) { for (const s of series) { const k = el('span', {class: 'key'}); const i = el('i');
+  i.style.background = s.color; k.append(i, document.createTextNode(s.name)); host.append(k); } }
+function table(host, rows, cols) { if (!rows.length) { host.append(el('div', {class: 'empty'}, '暂无')); return; }
+  const wrap = el('div', {class: 'scroll'}); const t = el('table'); const hr = el('tr'); cols.forEach(c => hr.append(el('th', {class: c.num ? 'num' : ''}, c.name)));
+  t.append(hr); for (const r of rows) { const tr = el('tr');
+    cols.forEach(c => tr.append(el('td', {class: c.num ? 'num' : ''}, c.fmt ? c.fmt(r[c.key], r) : String(r[c.key] ?? '—'))));
+    t.append(tr); } wrap.append(t); host.append(wrap); }
+
+const cs = [{key: 'portfolio', name: '组合', color: 'var(--s1)'},
+            {key: 'model', name: '研究模型', color: 'var(--s2)'},
+            {key: 'spy', name: '持有 SPY', color: 'var(--s3)'}];
+const es = [{key: 'e', name: '仓位', color: 'var(--s1)'}];
+const ss = [{key: 'spy', name: 'SPY', color: 'var(--s1)'}, {key: 'sma', name: '200 日均线', color: 'var(--s2)'}];
+legend($('lg-curves'), cs); legend($('lg-signal'), ss);
+const draw = () => {
+  lineChart($('ch-curves'), S.curves || [], cs, {label: '净值走势', fmt: v => v.toFixed(0)});
+  lineChart($('ch-exposure'), S.exposure || [], es, {h: 200, min: 0, max: 2.1, ticks: [0, 0.5, 1, 1.5, 2],
+    fmt: v => v.toFixed(1) + '×', tipFmt: v => v.toFixed(2) + ' 倍', direct: false, label: '仓位'});
+  lineChart($('ch-signal'), S.signal_series || [], ss, {h: 200, label: 'SPY 与均线', fmt: v => v.toFixed(0)});
+};
+draw();
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(draw, 150); });
+table($('tb-curves'), [...(S.curves || [])].reverse(), [{key: 'd', name: '日期'},
+  ...cs.map(s => ({key: s.key, name: s.name, num: true, fmt: v => v.toFixed(2)}))]);
+table($('tb-exposure'), [...(S.exposure || [])].reverse(), [{key: 'd', name: '日期'},
+  {key: 'e', name: '仓位', num: true, fmt: v => v.toFixed(2) + ' 倍'}]);
+table($('tb-signal'), [...(S.signal_series || [])].reverse().slice(0, 60), [{key: 'd', name: '日期'},
+  {key: 'spy', name: 'SPY', num: true, fmt: v => v.toFixed(2)}, {key: 'sma', name: '200 日均线', num: true, fmt: v => v === null ? '—' : v.toFixed(2)}]);
+table($('orders'), [...(S.orders || [])].reverse(), [{key: 'signal_day', name: '信号日'},
+  {key: 'side', name: '方向', fmt: v => v === 'BUY' ? '买入' : '卖出'}, {key: 'symbol', name: '标的'},
+  {key: 'shares', name: '股数', num: true}, {key: 'ref_price', name: '参考价', num: true, fmt: v => v.toFixed(2)},
+  {key: 'value', name: '金额', num: true, fmt: v => usd(v)}]);
+const hrows = Object.entries((S.holdings || {}).positions || {}).map(([s, n]) => ({s, n, p: (S.prices || {})[s] || 0}));
+hrows.push({s: '现金', n: null, p: null, v: (S.holdings || {}).cash || 0});
+table($('holdings'), hrows, [{key: 's', name: '标的'}, {key: 'n', name: '股数', num: true, fmt: v => v === null ? '—' : String(v)},
+  {key: 'p', name: '收盘价', num: true, fmt: v => v === null ? '—' : v.toFixed(2)},
+  {key: 'v', name: '市值', num: true, fmt: (v, r) => usd(r.n === null ? r.v : r.n * r.p)}]);
+</script>
+</body>
+</html>

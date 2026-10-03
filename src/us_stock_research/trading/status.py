@@ -15,7 +15,7 @@ import argparse
 import csv
 import json
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,82 @@ def append_nav(path: Path, day: date, nav: float, exposure: float) -> list[tuple
         for d in sorted(rows):
             w.writerow([d.isoformat(), f"{rows[d][0]:.2f}", f"{rows[d][1]:.4f}"])
     return [(d, rows[d][0]) for d in sorted(rows)]
+
+
+def read_nav(path: Path) -> list[tuple[date, float, float]]:
+    if not path.exists():
+        return []
+    with path.open() as fh:
+        return [
+            (date.fromisoformat(r["date"]), float(r["nav"]), float(r["exposure"]))
+            for r in csv.DictReader(fh)
+        ]
+
+
+def chart_series(
+    rule: dict[str, Any],
+    days: list[date],
+    closes: list[float],
+    yields_pct: list[float | None],
+    nav_rows: list[tuple[date, float, float]],
+    signal_days: int = 260,
+) -> dict[str, Any]:
+    """Curves for the dashboard: portfolio, research model and SPY indexed to 100 at the first
+    valuation; exposure history; SPY and its moving average over the last year."""
+    n = int(rule["sma_days"])
+    sma = [sum(closes[i - n + 1 : i + 1]) / n if i >= n - 1 else None for i in range(len(closes))]
+    tail = range(max(0, len(days) - signal_days), len(days))
+    out: dict[str, Any] = {
+        "signal_series": [
+            {"d": days[i].isoformat(), "spy": round(closes[i], 4),
+             "sma": None if sma[i] is None else round(float(sma[i] or 0.0), 4)}
+            for i in tail
+        ],
+        "curves": [],
+        "exposure": [{"d": d.isoformat(), "e": e} for d, _, e in nav_rows],
+    }  # fmt: skip
+    if not nav_rows:
+        return out
+    start, nav0 = nav_rows[0][0], nav_rows[0][1]
+    sim = simulate_vol_target(
+        days,
+        closes,
+        yields_pct,
+        sma_days=n,
+        vol_window=int(rule["vol_window_days"]),
+        vol_target=float(rule["vol_target"]),
+        max_leverage=float(rule["max_leverage"]),
+        band=float(rule["rebalance_band"]),
+        cost_bps=float(rule["trading_cost_bps"]),
+    )
+    model: dict[date, float] = {start: 1.0}
+    g = 1.0
+    for d, r, _, _ in sim:
+        if d > start:
+            g *= 1 + r
+            model[d] = g
+    price = dict(zip(days, closes, strict=True))
+    for d, v, _ in nav_rows:
+        if d in model and d in price and start in price:
+            out["curves"].append(
+                {"d": d.isoformat(), "portfolio": round(100 * v / nav0, 4),
+                 "model": round(100 * model[d], 4),
+                 "spy": round(100 * price[d] / price[start], 4)}
+            )  # fmt: skip
+    return out
+
+
+def recent_orders(folder: Path, limit: int = 20) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(folder.glob("*.json")):
+        intent = json.loads(path.read_text())
+        for o in intent.get("orders", []):
+            rows.append(
+                {"signal_day": intent["signal_day"], "side": o["side"], "symbol": o["symbol"],
+                 "shares": o["shares"], "ref_price": o["ref_price"],
+                 "value": o["est_value_usd"], "mode": intent.get("mode")}
+            )  # fmt: skip
+    return rows[-limit:]
 
 
 def model_growth(
@@ -173,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gates", type=Path, default=Path("configs/stage_gates.yml"))
     parser.add_argument("--update-report", type=Path, help="latest usr-update JSON")
     parser.add_argument("--output", type=Path, default=Path("artifacts/status.md"))
+    parser.add_argument("--orders-dir", type=Path, default=Path("orders"))
     args = parser.parse_args(argv)
     if not args.holdings.exists():
         print(f"还没有持仓文件 {args.holdings}（首笔订单记账后才有）")
@@ -220,6 +297,28 @@ def main(argv: list[str] | None = None) -> int:
     source = "Alpaca 模拟盘" if "paper" in str(args.holdings) else "演练账本"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(status, holdings, source))
+    from us_stock_research.trading.dashboard import render_html
+
+    days_all = [b.day for b in bars]
+    payload = {
+        **status,
+        "source": source,
+        "study": contract["name"],
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "holdings": {"cash": holdings.cash_usd, "positions": holdings.positions},
+        "prices": prices,
+        "orders": recent_orders(args.orders_dir / contract["name"]),
+        **chart_series(
+            contract["rule"],
+            days_all,
+            [b.adj_close for b in bars],
+            forward_fill(days_all, yields),
+            read_nav(args.holdings.with_suffix(".nav.csv")),
+        ),
+    }
+    text = json.dumps(payload, ensure_ascii=False, default=str)
+    args.output.with_name("status.json").write_text(text)
+    args.output.with_name("dashboard.html").write_text(render_html(payload))
     sig, pf = status["signal"], status["portfolio"]
     print(
         f"{status['day']}：目标 {sig['target_exposure']:.2f} 倍 / "

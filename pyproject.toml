@@ -59,6 +59,9 @@ usr-backtest = "us_stock_research.research.backtest:main"
 usr-compare-brokers = "us_stock_research.research.broker_compare:main"
 usr-assess-research = "us_stock_research.research.promotion:main"
 
+[tool.setuptools.package-data]
+us_stock_research = ["trading/*.html"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

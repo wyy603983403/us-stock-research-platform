@@ -18,3 +18,8 @@
 
 常用：`systemctl start usr-trade.service`（立即运行）、`journalctl -u usr-trade -n 80`、`cat /opt/usr-trade/state/artifacts/status.md`、
 `systemctl list-timers usr-trade.timer`。
+
+监控页面（2026-10-03）：每次运行后生成 `/opt/usr-trade/state/artifacts/dashboard.html`（状态、净值对比研究模型与 SPY、
+仓位历史、SPY 与 200 日均线、最近订单、持仓、需要关注的事项；明暗两种主题，手机可看）。页面只在服务器本机 8787 端口提供
+（`usr-dashboard.service`），不对公网开放；在 Mac 上运行 `bash scripts/open_dashboard.sh root@43.135.185.94 ~/.ssh/evunea_deploy_ed25519`
+建立 SSH 隧道并自动用浏览器打开。Mac 本地运行该策略时同样生成 `artifacts/dashboard.html`，可直接双击打开。

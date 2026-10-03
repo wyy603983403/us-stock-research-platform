@@ -57,9 +57,23 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+cat > /etc/systemd/system/usr-dashboard.service <<UNIT
+[Unit]
+Description=Trading dashboard (static page, localhost only; open through an SSH tunnel)
+After=network.target
+[Service]
+User=usrtrade
+WorkingDirectory=$BASE/state/artifacts
+ExecStart=/usr/bin/python3 -m http.server 8787 --bind 127.0.0.1
+Restart=always
+[Install]
+WantedBy=multi-user.target
+UNIT
 systemctl daemon-reload
 systemctl enable --now usr-trade.timer >/dev/null
+systemctl enable --now usr-dashboard.service >/dev/null
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"
 echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/$TOPIC）"
+echo "监控页面（只在服务器本机监听）：在 Mac 运行 bash scripts/open_dashboard.sh root@服务器IP 私钥路径"
 echo "立即试跑：systemctl start usr-trade.service；日志：journalctl -u usr-trade -n 50；状态：cat $BASE/state/artifacts/status.md"
