@@ -23,3 +23,8 @@
 仓位历史、SPY 与 200 日均线、最近订单、持仓、需要关注的事项；明暗两种主题，手机可看）。页面只在服务器本机 8787 端口提供
 （`usr-dashboard.service`），不对公网开放；在 Mac 上运行 `bash scripts/open_dashboard.sh root@43.135.185.94 ~/.ssh/evunea_deploy_ed25519`
 建立 SSH 隧道并自动用浏览器打开。Mac 本地运行该策略时同样生成 `artifacts/dashboard.html`，可直接双击打开。
+
+网页入口（HTTPS + 密码，2026-10-03）：在 Mac 运行 `bash scripts/server_web.sh root@43.135.185.94 ~/.ssh/evunea_deploy_ed25519 [域名]`，
+本机输入用户名和密码（服务器只存 bcrypt 哈希），服务器装 Caddy（`usr-web.service`）。只开放 `/dashboard.html` 与 `/status.json`，
+其余 404；不带密码 401。没有域名时用 IP + 自签证书（浏览器首次提示不安全，确认即可，传输仍加密）；有域名时自动申请正式证书
+（需放行 80/443）。云服务商安全组需放行 TCP 443。重新运行即可改密码；停用：`systemctl disable --now usr-web`。
