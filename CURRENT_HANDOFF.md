@@ -63,3 +63,4 @@
 28. 监控网页（2026-10-03）：服务器 Caddy `usr-web.service`，https://43.135.185.94:8443（443 被已有 nginx 占用），基本认证，
     只开放 /dashboard.html 与 /status.json；`scripts/server_web.sh` 设置/改密码。飞书机器人通知 `FEISHU_WEBHOOK`（scripts/notify.sh）。
 29. 纳指 100 趋势 + 波动率目标（预先登记 4f16c4c）未通过：年化 12.7% vs 14.6%，见 docs/results/ndx-trend-voltarget.md。试验登记 10 组。
+30. 组合研究 vt_plus_defensive（预先登记 3c039a2，`usr-sleeve-mix`）四项通过：夏普 0.84 vs 0.64，年化 7.8% vs 10.6%，回撤约减半；等待用户审查。usr-update 已加 429 重试。
