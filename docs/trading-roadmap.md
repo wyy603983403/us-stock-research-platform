@@ -58,3 +58,11 @@
 超过 0.25 倍或趋势状态改变才出订单（标记 live-candidate，`trading_enabled` 仍为 false）。账本
 `portfolio/rehearsal/sp500_trend_voltarget.yml`，熔断线 40%。原 2 倍杠杆演练停止（账本保留）。
 阶段 1 → 2 门槛：连续 3 个月订单清单与你的手工复核一致；阶段 2（模拟盘）需要连接券商模拟账户，代码目前没有任何券商连接，届时由你决定券商与开户。
+
+阶段 2 准备（2026-10-03，用户决定）：模拟盘先用 **Alpaca 模拟账户**（盈透账户仍在审核，其试用账户不支持 API；众安银行无模拟盘和 API）。
+工具 `usr-paper`（`trading/alpaca_paper.py`）：接口地址写死为 paper-api.alpaca.markets，没有实盘路径；密钥用模拟账户自己的
+`ALPACA_PAPER_KEY_ID` / `ALPACA_PAPER_SECRET_KEY`；`--check` 只读查看账户，`--sync` 写模拟持仓并对账，`--submit` 发送最新订单清单
+（收盘竞价单 `cls`，按 client_order_id 去重，对账不一致则不发）。**`configs/paper_broker.yml` 的 `enabled` 现在为 false，
+只有你在阶段 1 通过后才改为 true**；打开后每日更新自动走“对账 → 出单 → 发单”。
+注意：Alpaca 在纽约时间 15:50–19:00 拒收收盘竞价单。定时任务 07:30（北京）在冬令时等于纽约 18:30，会被拒；打开模拟盘前
+要把定时任务改到 08:30（北京）之后（`scripts/mac_install_schedule.sh` 里的 Hour）。

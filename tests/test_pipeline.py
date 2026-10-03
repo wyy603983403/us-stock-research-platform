@@ -1974,3 +1974,63 @@ def test_volatility_target_daily_intent() -> None:
                     peak_nav_usd=100_000.0)  # fmt: skip
     assert li.generate(c, data, held, days[-1], risk_on="SSO", risk_off="BIL",
                        signal="SPY")["orders"] == []  # fmt: skip
+
+
+def test_alpaca_paper_submission_is_paper_only_idempotent_and_reconciled() -> None:
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from us_stock_research.trading import alpaca_paper as ap
+
+    posted: list[dict] = []  # type: ignore[type-arg]
+    known: dict[str, dict] = {}  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "paper-api.alpaca.markets"
+        assert request.headers["APCA-API-KEY-ID"] == "k"
+        if request.url.path == "/v2/orders:by_client_order_id":
+            cid = request.url.params["client_order_id"]
+            return httpx.Response(200, json=known[cid]) if cid in known else httpx.Response(404)
+        if request.url.path == "/v2/orders" and request.method == "POST":
+            body = __import__("json").loads(request.content)
+            assert body["time_in_force"] == "cls" and body["type"] == "market"
+            posted.append(body)
+            known[body["client_order_id"]] = {"status": "accepted"}
+            return httpx.Response(200, json={"status": "accepted"})
+        raise AssertionError(request.url)
+
+    client = ap.PaperClient("k", "s", transport=httpx.MockTransport(handler))
+    intent = {"study": "vt", "signal_day": "2026-10-05", "mode": "live-candidate",
+              "trading_enabled": False,
+              "orders": [{"side": "BUY", "symbol": "SSO", "shares": 10},
+                         {"side": "SELL", "symbol": "BIL", "shares": 5}]}  # fmt: skip
+    holdings = {"positions": {"BIL": 5.0}}
+    evening = datetime(2026, 10, 6, 0, 30, tzinfo=UTC)  # 20:30 New York (EDT)
+    sent, expected = ap.submit(client, intent, holdings, now_utc=evening)
+    assert [b["side"] for b in posted] == ["sell", "buy"] and expected == {"SSO": 10.0}
+    again, _ = ap.submit(client, intent, holdings, now_utc=evening)
+    assert len(posted) == 2 and not any(s["resubmitted"] for s in again)  # idempotent
+    for bad, why in (
+        (dict(intent, mode="rehearsal"), "approved"),
+        (dict(intent, trading_enabled=True), "live"),
+    ):
+        try:
+            ap.submit(client, bad, holdings, now_utc=evening)
+        except ValueError as exc:
+            assert why in str(exc)
+        else:
+            raise AssertionError("submitted")
+    after_close = datetime(2026, 10, 5, 20, 0, tzinfo=UTC)  # 16:00 New York
+    assert not ap.submission_window_ok(after_close) and ap.submission_window_ok(evening)
+    winter = datetime(2026, 12, 7, 23, 30, tzinfo=UTC)  # 18:30 EST: still rejected
+    assert not ap.submission_window_ok(winter)
+    assert ap.reconcile({"SSO": 10.0}, {"SSO": 10.0}) == []
+    assert ap.reconcile({"SSO": 10.0}, {"SSO": 7.0, "BIL": 1.0}) == [
+        "BIL: expected 0, paper account holds 1",
+        "SSO: expected 10, paper account holds 7",
+    ]
+    h = ap.holdings_from_account({"equity": "105000", "cash": "12.5"}, {"SSO": 10.0},
+                                 {"peak_nav_usd": 110000.0})  # fmt: skip
+    assert h["peak_nav_usd"] == 110000.0 and h["cash_usd"] == 12.5
+    assert ap.load_config(Path("configs/paper_broker.yml"))["enabled"] is False

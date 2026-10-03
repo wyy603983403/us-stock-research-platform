@@ -95,9 +95,20 @@ echo "== 均线 + 波动率目标（已批准，${LASTDAY}，只写文件）"
 .venv/bin/usr-rehearsal-fill --study sp500_trend_voltarget --cost-bps 10 2>&1 | tail -n 3 \
   || echo "  演练记账失败"
 LT_LEDGER=portfolio/rehearsal/sp500_trend_voltarget.yml
+PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))" 2>/dev/null)
+if [ "$PAPER_ON" = "True" ]; then
+  # 阶段 2：持仓以 Alpaca 模拟账户为准（先对账，不一致则不发新单）
+  echo "== 模拟盘（Alpaca paper）对账"
+  .venv/bin/usr-paper --sync 2>&1 | tail -n 5
+  LT_LEDGER=portfolio/paper/sp500_trend_voltarget.yml
+fi
 LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
 # 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
 .venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
   --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
   | tail -n 1 || echo "  生成失败"
+if [ "$PAPER_ON" = "True" ]; then
+  echo "== 模拟盘下单（收盘竞价单，次日收盘成交）"
+  .venv/bin/usr-paper --submit 2>&1 | tail -n 12
+fi
 echo "完成 $(date '+%Y-%m-%d %H:%M')"
