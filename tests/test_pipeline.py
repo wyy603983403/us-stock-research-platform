@@ -2034,3 +2034,44 @@ def test_alpaca_paper_submission_is_paper_only_idempotent_and_reconciled() -> No
                                  {"peak_nav_usd": 110000.0})  # fmt: skip
     assert h["peak_nav_usd"] == 110000.0 and h["cash_usd"] == 12.5
     assert ap.load_config(Path("configs/paper_broker.yml"))["enabled"] is False
+
+
+def test_daily_status_tracks_model_and_flags_attention(tmp_path: Path) -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import leveraged_trend as lt
+    from us_stock_research.trading import status as st
+    from us_stock_research.trading.order_intent import Holdings
+
+    days = trading_days(date(2025, 1, 2), date(2026, 9, 30))
+    rng = random.Random(8)
+    closes, p = [], 100.0
+    for _ in days:
+        p *= 1 + rng.gauss(0.0005, 0.009)
+        closes.append(p)
+    rule = {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25, "max_leverage": 2.0,
+            "rebalance_band": 0.25, "trading_cost_bps": 10}  # fmt: skip
+    yields = {d: 4.0 for d in days}
+    nav_file = tmp_path / "x.nav.csv"
+    start = days[-60]
+    model = st.model_growth(rule, days, closes, lt.forward_fill(days, yields), start)
+    st.append_nav(nav_file, start, 100_000.0, 1.0)
+    history = st.append_nav(nav_file, days[-1], 100_000.0 * model, 1.2)
+    assert [d for d, _ in history] == [start, days[-1]]
+    assert st.append_nav(nav_file, days[-1], 100_000.0 * model, 1.2) == history  # idempotent
+    h = Holdings(cash_usd=0.0, positions={"SSO": 100.0}, peak_nav_usd=100_000.0)
+    s = st.build({"rule": rule}, {"stage2": {"max_cumulative_tracking_gap": 0.03}},
+                 list(zip(days, closes, strict=True)), {"SSO": 50.0, "SPY": closes[-1]}, h,
+                 history, yields, one_x="SPY", leveraged="SSO", breaker=0.40,
+                 data_issues=[])  # fmt: skip
+    assert abs(s["tracking"]["gap"]) < 1e-9 and not s["attention"]
+    off = history[:-1] + [(days[-1], 100_000.0 * model * 0.9)]
+    s2 = st.build({"rule": rule}, {}, list(zip(days, closes, strict=True)),
+                  {"SSO": 50.0, "SPY": closes[-1]},
+                  Holdings(cash_usd=0.0, positions={"SSO": 1.0}, peak_nav_usd=200_000.0),
+                  off, yields, one_x="SPY", leveraged="SSO", breaker=0.40,
+                  data_issues=["BIL stale"])  # fmt: skip
+    joined = " ".join(s2["attention"])
+    assert "BIL stale" in joined and "偏差" in joined and "熔断" in joined
+    assert "交易系统状态" in st.render(s2, h, "演练账本")

@@ -1,0 +1,11 @@
+# 各阶段的晋级门槛（2026-10-03 定下，在进入阶段 2 之前；改动需用户同意并记录日期）。
+stage1:                    # 订单演练 → 模拟盘
+  consecutive_months: 3    # 连续 3 个自然月，每份订单清单都经用户手工复核一致
+stage2:                    # 模拟盘 → 小额实盘（每笔人工确认）
+  months: 6
+  reconciliation_breaks: 0                 # 对账不一致次数
+  max_cumulative_tracking_gap: 0.03        # 组合与研究模型的累计收益差（同期、同起点）不超过 ±3 个百分点
+  max_fill_slippage_bps: 15                # 收盘竞价成交价相对当日收盘价的平均偏差
+stage3:                    # 小额实盘 → 有限自动
+  months: 12
+  max_worst_12m_loss: 0.50                 # 与 configs/risk/default.yml 一致

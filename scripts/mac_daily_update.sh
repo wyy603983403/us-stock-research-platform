@@ -104,11 +104,25 @@ if [ "$PAPER_ON" = "True" ]; then
 fi
 LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
 # 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
-.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
+LT_OUT=$(.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
   --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
-  | tail -n 1 || echo "  生成失败"
+  | tail -n 1) || LT_OUT="生成失败"
+echo "  $LT_OUT"
 if [ "$PAPER_ON" = "True" ]; then
   echo "== 模拟盘下单（收盘竞价单，次日收盘成交）"
   .venv/bin/usr-paper --submit 2>&1 | tail -n 12
+fi
+echo "== 状态（artifacts/status.md）"
+ST_OUT=$(.venv/bin/usr-status --contract research/sp500-trend-voltarget/study.yml --holdings "$LT_LEDGER" \
+  --update-report "artifacts/universe/update_${STAMP}.json" 2>&1); ST_RC=$?
+echo "$ST_OUT" | sed 's/^/  /'
+# 有新订单、只减仓、生成失败或状态需要关注时，在 Mac 上弹通知
+NOTE=""
+case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：${LT_OUT}";; *) NOTE="订单生成异常：${LT_OUT}";; esac
+case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：${LT_OUT}";; esac
+[ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
+if [ -n "$NOTE" ] && command -v osascript >/dev/null; then
+  MSG=$(printf '%s' "$NOTE" | cut -c1-200 | tr '"' "'")
+  osascript -e "display notification \"$MSG\" with title \"美股交易系统\"" 2>/dev/null || true
 fi
 echo "完成 $(date '+%Y-%m-%d %H:%M')"
