@@ -138,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
                 lt = load_lt_contract(path)
                 print(f"OK   {path} ({lt['name']}, {lt.get('status')}, leveraged_trend)")
                 continue
+            if kind == "sleeve_mix":
+                from us_stock_research.research.sleeve_mix import load_mix_contract
+
+                mix = load_mix_contract(path)
+                print(f"OK   {path} ({mix['name']}, {mix.get('status')}, sleeve_mix)")
+                continue
             if kind == "cross_section":
                 from us_stock_research.research.cross_section import load_xs_contract
 

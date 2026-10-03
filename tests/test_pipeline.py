@@ -51,6 +51,10 @@ def test_repo_contracts_and_risk_config_are_valid() -> None:
             from us_stock_research.research.leveraged_trend import load_lt_contract
 
             assert load_lt_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
+        elif "kind: sleeve_mix" in text:
+            from us_stock_research.research.sleeve_mix import load_mix_contract
+
+            assert load_mix_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
         elif "kind: cross_section" not in text:  # validated by the xs engine test
             load_contract(path)
     risk = load_risk(ROOT / "configs/risk/default.yml")
@@ -2127,3 +2131,37 @@ def test_dashboard_page_renders_series_and_escapes_data(tmp_path: Path) -> None:
         '"symbol": "SSO", "shares": 3, "ref_price": 70.0, "est_value_usd": 210.0}]}'
     )
     assert st.recent_orders(folder)[0]["symbol"] == "SSO"
+
+
+def test_sleeve_mix_matches_independent_and_costs() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import sleeve_mix as sm
+    from us_stock_research.research import verify_mix as vm
+
+    days = trading_days(date(2003, 1, 2), date(2008, 12, 31))
+    rng = random.Random(7)
+    inputs = {}
+    for sym, drift in (("TLT", 0.0002), ("IEF", 0.0001), ("GLD", 0.0003)):
+        p = [100.0]
+        for _ in days[1:]:
+            p.append(p[-1] * (1 + drift + rng.gauss(0, 0.01)))
+        inputs[sym] = (days, p, [4.0] * len(days))
+    start, end = date(2004, 1, 1), date(2008, 12, 31)
+    series = sm.defensive_series(inputs, 200, 10.0)
+    defensive = sm.defensive_monthly(series, start, end)
+    vt = {m: rng.gauss(0.01, 0.05) for m in defensive}
+    mix = sm.combine(vt, defensive, 0.5, 10.0)
+    ind = vm.mix_monthly(vt_monthly=vt, inputs=inputs, sma=200, bps=10.0, weight=0.5,
+                         start=start, end=end)  # fmt: skip
+    assert set(ind) == set(mix) and len(mix) == 60
+    assert max(abs(ind[m] - mix[m]) for m in mix) < 1e-12
+    # no drift -> no rebalance cost; buy-and-hold variant never pays switch costs
+    flat = sm.combine({"2005-01": 0.02}, {"2005-01": 0.02}, 0.5, 10.0)
+    assert abs(flat["2005-01"] - 0.02) < 1e-15
+    held = sm.defensive_series(inputs, 200, 10.0, use_trend=False)["GLD"]
+    gld = inputs["GLD"][1]
+    assert abs(held[-1][1] - (gld[-1] / gld[-2] - 1)) < 1e-15
+    test = sm.paired_sharpe_bootstrap(list(mix.values()), list(mix.values()), 200, 6, 0.95, 1)
+    assert test["interval"] == [0.0, 0.0] and test["sharpe_difference"] == 0.0
