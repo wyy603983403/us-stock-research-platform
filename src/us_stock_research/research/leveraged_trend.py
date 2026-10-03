@@ -240,18 +240,66 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     fails: list[str] = []
     interval = summary["excess_vs_benchmark"].get("interval")
     if not interval or interval[0] <= 0:
-        fails.append("相对 SPY 超额收益 95% 置信区间下限不为正")
+        fails.append("相对基准超额收益 95% 置信区间下限不为正")
     cap = float(contract["risk"]["max_worst_12m_loss"])
     worst = summary["strategy"]["worst_rolling_12m_return"]
     if worst is not None and worst < -cap:
         fails.append(f"最差滚动 12 个月 {worst:.1%}，超过 {cap:.0%} 亏损上限")
     if dsr is None or dsr < 0.95:
         fails.append(f"Deflated Sharpe {dsr if dsr is None else round(dsr, 3)} < 0.95")
+    what, limit = ("全收益构造与 SPY", 0.005) if total_return(contract) else ("模型与 SSO", 0.015)
     if validation is None or "annualized_diff" not in validation:
-        fails.append("模型验证未完成（缺少 SSO 日线）")
-    elif abs(validation["annualized_diff"]) > 0.015:
-        fails.append(f"模型与 SSO 年化差异 {validation['annualized_diff']:+.2%} 超过 ±1.5%")
+        fails.append(f"验证未完成（{what}：缺少数据）")
+    elif abs(validation["annualized_diff"]) > limit:
+        fails.append(f"{what}年化差异 {validation['annualized_diff']:+.2%} 超过 ±{limit:.1%}")
     return fails
+
+
+def total_return(contract: dict[str, Any]) -> bool:
+    return bool(contract["data"].get("total_return") == "price_plus_monthly_dividend_yield")
+
+
+def total_return_index(
+    days: list[date], closes: list[float], dividend_yield_pct: dict[date, float]
+) -> list[float]:
+    """Price index plus dividends: daily price change + latest earlier monthly yield / 252."""
+    known = sorted(dividend_yield_pct.items())
+    out = [1.0]
+    j, y = 0, None
+    for k in range(1, len(days)):
+        while j < len(known) and known[j][0] < days[k]:
+            y = known[j][1]
+            j += 1
+        if y is None:
+            raise ValueError(f"no dividend yield before {days[k]}")
+        out.append(out[-1] * (closes[k] / closes[k - 1] + y / 100 / TRADING_DAYS))
+    return out
+
+
+def validate_total_return(
+    days: list[date], index: list[float], spy: dict[date, float], start: date, end: date
+) -> dict[str, Any]:
+    """Constructed total-return index vs SPY's adjusted closes over the same days."""
+    common = [(d, v) for d, v in zip(days, index, strict=True) if start <= d <= end and d in spy]
+    if len(common) < TRADING_DAYS:
+        return {"error": "too little overlap"}
+    years = (len(common) - 1) / TRADING_DAYS
+    built = (common[-1][1] / common[0][1]) ** (1 / years) - 1
+    real = (spy[common[-1][0]] / spy[common[0][0]]) ** (1 / years) - 1
+    diffs = [
+        (b[1] / a[1]) - (spy[b[0]] / spy[a[0]]) for a, b in zip(common, common[1:], strict=False)
+    ]
+    mean = sum(diffs) / len(diffs)
+    te = math.sqrt(sum((x - mean) ** 2 for x in diffs) / (len(diffs) - 1)) * math.sqrt(252)
+    return {
+        "from": common[0][0].isoformat(),
+        "to": common[-1][0].isoformat(),
+        "years": round(years, 2),
+        "constructed_cagr": built,
+        "spy_cagr": real,
+        "annualized_diff": built - real,
+        "tracking_error": te,
+    }
 
 
 def load_inputs(tables: Any, store: Any, contract: dict[str, Any]) -> tuple[
@@ -261,6 +309,13 @@ def load_inputs(tables: Any, store: Any, contract: dict[str, Any]) -> tuple[
     bars = [b for b in store.read_bars(symbol) if b.adj_close > 0]
     days = [b.day for b in bars]
     prices = [b.adj_close for b in bars]
+    if total_return(contract):
+        rows_dy = tables.read("macro", contract["data"]["dividend_yield"], "date, value")
+        dy = {d: float(v) for d, v in rows_dy if v is not None and v == v}
+        first = min(dy)
+        keep = [i for i, d in enumerate(days) if d > first]
+        days = [days[i] for i in keep]
+        prices = total_return_index(days, [bars[i].close for i in keep], dy)
     rows = tables.read("macro", contract["data"]["cash_rate"], "date, value")
     rate = {d: float(v) for d, v in rows if v is not None and v == v}  # NaN = missing
     yields = forward_fill(days, rate)
@@ -288,11 +343,17 @@ def main(argv: list[str] | None = None) -> int:
     days, prices, yields, sso = load_inputs(tables, store, contract)
     result = run(contract, days, prices, yields)
     summary = summarize(contract, result)
-    validation = (
-        validate_leverage_model(days, prices, yields, sso, float(contract["rule"]["leverage"]))
-        if sso
-        else None
-    )
+    if total_return(contract):
+        spy = {b.day: b.adj_close for b in store.read_bars("SPY") if b.adj_close > 0}
+        validation: dict[str, Any] | None = validate_total_return(
+            days, prices, spy, date(1994, 1, 1), date(2025, 12, 31)
+        )
+    elif sso:
+        validation = validate_leverage_model(
+            days, prices, yields, sso, float(contract["rule"]["leverage"])
+        )
+    else:
+        validation = None
     digest = hashlib.sha256()
     for row in zip(days, prices, yields, strict=True):
         digest.update(repr(row).encode())

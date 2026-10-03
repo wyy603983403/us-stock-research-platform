@@ -1853,3 +1853,37 @@ def test_leveraged_trend_daily_intent() -> None:
     # already on target: nothing to do
     on_target = Holdings(cash_usd=10.0, positions={"SSO": 1000.0}, peak_nav_usd=1e5)
     assert generate(c, up, on_target, days[-1], risk_on="SSO", risk_off="BIL")["orders"] == []
+
+
+def test_long_history_total_return_and_dividend_yield_table() -> None:
+    from us_stock_research.collectors.multpl import parse_table
+    from us_stock_research.research import leveraged_trend as lt
+
+    page = (
+        "<table><tr><th>Date</th><th>Value</th></tr>"
+        '<tr class="odd"><td>Oct 1, 2026</td><td>\n<abbr title="Estimate">&#x2020;</abbr>\n'
+        "1.06%</td></tr>"
+        "<tr><td>Jun 30, 2026</td><td>\n1.10%\n</td></tr>"
+        "<tr><td>Dec 31, 1954</td><td>4.39%</td></tr></table>"
+    )
+    assert parse_table(page) == [(date(1954, 12, 31), 4.39), (date(2026, 6, 30), 1.10)]
+    days = [date(1955, 1, 3), date(1955, 1, 4), date(1955, 2, 1), date(1955, 2, 2)]
+    closes = [100.0, 101.0, 101.0, 99.99]
+    dy = {date(1954, 12, 31): 2.52, date(1955, 1, 31): 5.04}
+    tr = lt.total_return_index(days, closes, dy)
+    assert abs(tr[1] - (1.01 + 0.0001)) < 1e-12  # December yield in January
+    assert abs(tr[2] / tr[1] - (1 + 0.0002)) < 1e-12  # January's month-end yield from Feb 1
+    assert abs(tr[3] / tr[2] - (99.99 / 101 + 0.0002)) < 1e-12
+    spy = dict(zip(days, [x * 3 for x in tr], strict=True))
+    many = [date(1994, 1, 3) + __import__("datetime").timedelta(days=i) for i in range(400)]
+    idx = [1.0 + i / 1000 for i in range(400)]
+    check = lt.validate_total_return(many, idx, dict(zip(many, idx, strict=True)),
+                                     date(1994, 1, 1), date(2025, 12, 31))  # fmt: skip
+    assert abs(check["annualized_diff"]) < 1e-12 and check["tracking_error"] < 1e-12
+    assert spy[days[0]] == 3.0
+    hist = {"data": {"total_return": "price_plus_monthly_dividend_yield"},
+            "risk": {"max_worst_12m_loss": 0.5}}  # fmt: skip
+    summary = {"excess_vs_benchmark": {"interval": [0.001, 0.01]},
+               "strategy": {"worst_rolling_12m_return": -0.3}}  # fmt: skip
+    assert lt.evaluate(hist, summary, 0.99, {"annualized_diff": 0.004}) == []
+    assert "全收益" in lt.evaluate(hist, summary, 0.99, {"annualized_diff": 0.006})[0]
