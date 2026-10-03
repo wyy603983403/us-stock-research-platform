@@ -1889,6 +1889,28 @@ def test_long_history_total_return_and_dividend_yield_table() -> None:
     assert "全收益" in lt.evaluate(hist, summary, 0.99, {"annualized_diff": 0.006})[0]
 
 
+def test_etf_dividend_yield_points() -> None:
+    from us_stock_research.research import leveraged_trend as lt
+
+    step = __import__("datetime").timedelta
+    closes = {date(2000, 1, 3) + step(days=i): 100.0 for i in range(500)}
+    divs = {date(2000, 6, 15): 0.25, date(2000, 12, 15): 0.25, date(2001, 3, 15): 0.30}
+    y = lt.etf_dividend_yield(divs, closes, 0.5)
+    assert y[date(1900, 1, 1)] == 0.5
+    assert date(2000, 12, 31) not in y  # less than a year of ETF history
+    assert abs(y[date(2001, 1, 31)] - 0.5) < 1e-12  # 0.25 + 0.25 over 365 days / 100
+    assert abs(y[date(2001, 3, 31)] - 0.8) < 1e-12
+    assert abs(y[date(2001, 5, 16)] - 0.8) < 1e-12  # last day in data is a month-end point
+    assert all(d.month != (d + step(days=1)).month or d == max(closes)
+               for d in y if d.year > 1900)  # fmt: skip
+    tr = {"data": {"total_return": "price_plus_etf_dividend_yield", "validate_against": "QQQ"},
+          "risk": {"max_worst_12m_loss": 0.5}}  # fmt: skip
+    summary = {"excess_vs_benchmark": {"interval": [0.001, 0.01]},
+               "strategy": {"worst_rolling_12m_return": -0.3}}  # fmt: skip
+    assert lt.total_return(tr)
+    assert "QQQ" in lt.evaluate(tr, summary, 0.99, {"annualized_diff": 0.006})[0]
+
+
 def test_volatility_target_engine_matches_independent() -> None:
     import random
 

@@ -22,7 +22,7 @@ import hashlib
 import json
 import math
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -318,7 +318,9 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
         fails.append(f"最差滚动 12 个月 {worst:.1%}，超过 {cap:.0%} 亏损上限")
     if dsr is None or dsr < 0.95:
         fails.append(f"Deflated Sharpe {dsr if dsr is None else round(dsr, 3)} < 0.95")
-    what, limit = ("全收益构造与 SPY", 0.005) if total_return(contract) else ("模型与 SSO", 0.015)
+    ref = contract["data"].get("validate_against", "SPY")
+    tr = total_return(contract)
+    what, limit = (f"全收益构造与 {ref}", 0.005) if tr else ("模型与 SSO", 0.015)
     if validation is None or "annualized_diff" not in validation:
         fails.append(f"验证未完成（{what}：缺少数据）")
     elif abs(validation["annualized_diff"]) > limit:
@@ -326,8 +328,33 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     return fails
 
 
+TOTAL_RETURN_KINDS = ("price_plus_monthly_dividend_yield", "price_plus_etf_dividend_yield")
+
+
 def total_return(contract: dict[str, Any]) -> bool:
-    return bool(contract["data"].get("total_return") == "price_plus_monthly_dividend_yield")
+    return contract["data"].get("total_return") in TOTAL_RETURN_KINDS
+
+
+def etf_dividend_yield(
+    dividends: dict[date, float], closes: dict[date, float], before_pct: float
+) -> dict[date, float]:
+    """Monthly yield points (%) from an ETF's cash dividends, for ``total_return_index``.
+
+    At each month's last ETF trading day: dividends paid in the past 365 days / that close.
+    Points start once the ETF has a full year of history; before that ``before_pct`` applies
+    (dated 1900-01-01 so it covers the whole earlier index history).
+    """
+    days = sorted(closes)
+    out = {date(1900, 1, 1): before_pct}
+    paid = sorted(dividends.items())
+    for i, d in enumerate(days):
+        if i + 1 < len(days) and days[i + 1].month == d.month:
+            continue  # not a month end
+        if (d - days[0]).days < 365:
+            continue
+        total = sum(v for x, v in paid if d - timedelta(days=365) < x <= d)
+        out[d] = total / closes[d] * 100
+    return out
 
 
 def total_return_index(
@@ -373,16 +400,25 @@ def validate_total_return(
     }
 
 
-def load_inputs(tables: Any, store: Any, contract: dict[str, Any]) -> tuple[
-    list[date], list[float], list[float | None], dict[date, float] | None
-]:  # fmt: skip
-    symbol = contract["data"]["signal_and_asset"]
+def load_inputs(
+    tables: Any, store: Any, contract: dict[str, Any], *, before_pct: float | None = None
+) -> tuple[list[date], list[float], list[float | None], dict[date, float] | None]:
+    data = contract["data"]
+    symbol = data["signal_and_asset"]
     bars = [b for b in store.read_bars(symbol) if b.adj_close > 0]
     days = [b.day for b in bars]
     prices = [b.adj_close for b in bars]
     if total_return(contract):
-        rows_dy = tables.read("macro", contract["data"]["dividend_yield"], "date, value")
-        dy = {d: float(v) for d, v in rows_dy if v is not None and v == v}
+        if data["total_return"] == "price_plus_etf_dividend_yield":
+            etf = data["dividend_etf"]
+            dy = etf_dividend_yield(
+                store.read_dividends(etf),
+                {b.day: b.close for b in store.read_bars(etf) if b.close > 0},
+                float(data["dividend_yield_before_etf_pct"] if before_pct is None else before_pct),
+            )
+        else:
+            rows_dy = tables.read("macro", data["dividend_yield"], "date, value")
+            dy = {d: float(v) for d, v in rows_dy if v is not None and v == v}
         first = min(dy)
         keep = [i for i, d in enumerate(days) if d > first]
         days = [days[i] for i in keep]
@@ -415,10 +451,17 @@ def main(argv: list[str] | None = None) -> int:
     result = run(contract, days, prices, yields)
     summary = summarize(contract, result)
     if total_return(contract):
-        spy = {b.day: b.adj_close for b in store.read_bars("SPY") if b.adj_close > 0}
+        data = contract["data"]
+        ref = data.get("validate_against", "SPY")
+        etf_px = {b.day: b.adj_close for b in store.read_bars(ref) if b.adj_close > 0}
         validation: dict[str, Any] | None = validate_total_return(
-            days, prices, spy, date(1994, 1, 1), date(2025, 12, 31)
+            days,
+            prices,
+            etf_px,
+            date.fromisoformat(str(data.get("validate_from", "1994-01-01"))),
+            date.fromisoformat(str(data.get("validate_to", "2025-12-31"))),
         )
+        validation["against"] = ref
     elif sso:
         validation = validate_leverage_model(
             days, prices, yields, sso, float(contract["rule"]["leverage"])
@@ -454,6 +497,9 @@ def main(argv: list[str] | None = None) -> int:
         sens[f"vol_target_{vt:g}"] = summarize(
             contract, run(contract, days, prices, yields, vol_target=float(vt))
         )
+    for pct in contract.get("reporting", {}).get("sensitivity_dividend_yield_before_etf_pct", []):
+        d2, p2, y2, _ = load_inputs(tables, store, contract, before_pct=float(pct))
+        sens[f"pre_etf_yield_{pct:g}pct"] = summarize(contract, run(contract, d2, p2, y2))
     sub_periods = {}
     for lo, hi in contract.get("reporting", {}).get("subperiods", []):
         a, b = date.fromisoformat(str(lo)), date.fromisoformat(str(hi))
