@@ -250,15 +250,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update-report", type=Path, help="latest usr-update JSON")
     parser.add_argument("--output", type=Path, default=Path("artifacts/status.md"))
     parser.add_argument("--orders-dir", type=Path, default=Path("orders"))
+    parser.add_argument(
+        "--capital", type=float, default=100_000.0, help="本金（还没有持仓文件时按全部现金显示）"
+    )
     args = parser.parse_args(argv)
-    if not args.holdings.exists():
-        print(f"还没有持仓文件 {args.holdings}（首笔订单记账后才有）")
-        return 0
+    pending = not args.holdings.exists()
+    args.holdings.parent.mkdir(parents=True, exist_ok=True)
     contract = load_lt_contract(args.contract)
     gates = yaml.safe_load(args.gates.read_text()) if args.gates.exists() else {}
     settings = load_settings()
     store = open_store(settings)
-    holdings = load_holdings(args.holdings, 0.0)
+    holdings = load_holdings(args.holdings, args.capital)
     bars = [b for b in store.read_bars(args.signal_symbol) if b.adj_close > 0]
     day = bars[-1].day
     prices = {}
@@ -295,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
         data_issues=data_issues,
     )
     source = "Alpaca 模拟盘" if "paper" in str(args.holdings) else "演练账本"
+    if pending:
+        source += "（首笔订单尚未成交，按全部现金显示）"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(status, holdings, source))
     from us_stock_research.trading.dashboard import render_html
