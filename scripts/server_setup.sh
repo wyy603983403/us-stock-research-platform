@@ -75,5 +75,10 @@ systemctl enable --now usr-dashboard.service >/dev/null
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"
 echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/$TOPIC）"
-echo "监控页面（只在服务器本机监听）：在 Mac 运行 bash scripts/open_dashboard.sh root@服务器IP 私钥路径"
+if systemctl is-active --quiet usr-web.service 2>/dev/null; then
+  WEB=$(grep -m1 -oE '^https://[^ {]+' /etc/caddy/Caddyfile 2>/dev/null || true)
+  echo "监控网页：${WEB:-见 /etc/caddy/Caddyfile}/dashboard.html（密码登录；改密码在 Mac 运行 scripts/server_web.sh）"
+else
+  echo "监控页面：在 Mac 运行 bash scripts/server_web.sh root@服务器IP 私钥路径 开网页入口（或 scripts/open_dashboard.sh 走 SSH 通道）"
+fi
 echo "立即试跑：systemctl start usr-trade.service；日志：journalctl -u usr-trade -n 50；状态：cat $BASE/state/artifacts/status.md"
