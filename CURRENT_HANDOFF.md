@@ -52,5 +52,7 @@
     数据：^GSPC 1950 起、multpl 月度股息率（`usr-collect-sp-dividend-yield`）、FRED DTB3；全收益构造与 SPY 差 0.07%/年。试验登记 8 组。
 22. 趋势 + 波动率目标（预先登记 8f88fa5，1955–2025）：只差主检验；最差 12 月 −40.1%（守住 50%）。试验登记 9 组。
     趋势 + 杠杆一类规则四个版本方向一致、均不显著：超额来自少数几次长熊市，样本数量是根本限制；是否采用由用户判断。
-23. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
+23. 2026-10-03 用户人工批准 sp500_trend_voltarget（仅限无真钱阶段；同时批准单一资产 200% 名义敞口），合同 status: promoted。
+    每日更新改为该策略的每日订单（SPY/SSO/BIL，信号用 SPY 复权价，熔断 40%）；2 倍杠杆演练停止。阶段 1 复核从 10 月开始计。
+24. 待办：用户 Mac 上 `tar` 不支持 `--overwrite`（BSD tar），同步包用 `tar xzf 包名` 即可；Mac 仓库需 `git pull` 与 GitHub 同步。
     2026-09-30 的订单意向演练待人工复核；/bin/bash 完全磁盘访问权限（定时任务）；Alpaca 密钥建议重新生成。

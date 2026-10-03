@@ -1924,3 +1924,53 @@ def test_volatility_target_engine_matches_independent() -> None:
     assert 0 < res["average_exposure"] < 2
     sub_ = lt.run(c, days, prices, yields, start=date(2002, 1, 1), end=date(2002, 12, 31))
     assert sub_["months"][0] == "2002-01" and len(sub_["months"]) == 12
+
+
+def test_volatility_target_daily_intent() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import leveraged_trend as lt
+    from us_stock_research.trading import lt_intent as li
+    from us_stock_research.trading.order_intent import Holdings
+
+    assert li.exposure_weights(0.4, "SPY", "SSO", "BIL") == {"SPY": 0.4, "BIL": 0.6}
+    assert li.exposure_weights(1.5, "SPY", "SSO", "BIL") == {"SSO": 0.5, "SPY": 0.5}
+    assert li.exposure_weights(2.0, "SPY", "SSO", "BIL") == {"SSO": 1.0}
+    assert li.exposure_weights(0.0, "SPY", "SSO", "BIL") == {"BIL": 1.0}
+    h = Holdings(cash_usd=0.0, positions={"SSO": 10.0, "SPY": 10.0})
+    assert abs(li.current_exposure(h, {"SSO": 50.0, "SPY": 50.0}, "SPY", "SSO") - 1.5) < 1e-12
+    days = trading_days(date(2024, 1, 2), date(2026, 3, 31))
+    rng = random.Random(4)
+    closes, p = [], 100.0
+    for _ in days:
+        p *= 1 + rng.gauss(0.0006, 0.01)
+        closes.append(p)
+    rule = {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25, "max_leverage": 2.0,
+            "rebalance_band": 0.25, "name": "vt"}  # fmt: skip
+    # same target as the research engine on the day before it is applied
+    sim = lt.simulate_vol_target(days, closes, [1.0] * len(days), sma_days=200, vol_window=20,
+                                 vol_target=0.25, max_leverage=2.0, band=0.0,
+                                 cost_bps=0)  # fmt: skip
+    by_day = {row[0]: row[3] for row in sim}
+    for i in range(250, len(days) - 2, 37):
+        assert abs(li.vol_target_exposure(closes[: i + 1], rule) - by_day[days[i + 2]]) < 1e-12
+
+    def bars(xs):  # type: ignore[no-untyped-def]
+        return [DailyBar(d, x, x, x, x, x, 1) for d, x in zip(days, xs, strict=True)]
+
+    data = {"SPY": bars(closes), "SSO": bars([50.0] * len(days)), "BIL": bars([91.0] * len(days))}
+    c = {"name": "vt", "status": "promoted", "human_review": {"approved": True},
+         "data": {"signal_and_asset": "^GSPC"}, "rule": rule}  # fmt: skip
+    fresh = Holdings(cash_usd=100_000.0, peak_nav_usd=100_000.0)
+    it = li.generate(c, data, fresh, days[-1], risk_on="SSO", risk_off="BIL", signal="SPY")
+    assert it["mode"] == "live-candidate" and it["trading_enabled"] is False
+    aim = it["signal"]["exposure"]["target"]
+    assert abs(sum(it["target_weights"].values()) - 1) < 1e-6 and it["orders"]
+    # holding exactly the target mix: inside the band, no orders
+    w = li.exposure_weights(aim, "SPY", "SSO", "BIL")
+    px = {"SPY": closes[-1], "SSO": 50.0, "BIL": 91.0}
+    held = Holdings(cash_usd=0.0, positions={s: v * 100_000 / px[s] for s, v in w.items()},
+                    peak_nav_usd=100_000.0)  # fmt: skip
+    assert li.generate(c, data, held, days[-1], risk_on="SSO", risk_off="BIL",
+                       signal="SPY")["orders"] == []  # fmt: skip

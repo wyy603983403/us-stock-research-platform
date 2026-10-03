@@ -4,7 +4,7 @@
 schema_version: 1
 kind: leveraged_trend
 name: sp500_trend_voltarget
-status: registered
+status: promoted
 registered_at: 2026-10-03
 question: >
   标普 500 在 200 日均线上方时，按“目标波动率 25% ÷ 最近 20 日实际波动率”决定仓位（最高 2 倍），下方时持有国库券；
@@ -58,4 +58,13 @@ limitations:
   - 波动率目标对“毫无预兆的单日崩盘”帮助有限；1987 年 10 月 19 日前一周波动已上升，能降多少要看结果
   - 1955–2000 没有杠杆 ETF，成本按今天的假设
 human_review:
-  approved: false
+  approved: true
+  reviewer: 用户
+  reviewed_at: 2026-10-03
+  scope: 仅限不涉及真钱的阶段（路线图阶段 1 订单演练、阶段 2 模拟盘）；进入真钱阶段需另行批准
+  notes: >
+    主检验未通过（超额区间下限 −0.08%/月，为正概率 91%）；其余三项通过。用户在知情的情况下人工批准，
+    依据是 1955–2025 方向一致、最大回撤比持有标普小约 10 个百分点、最差 12 个月 −40.1% 在 50% 上限内。
+    同时批准单一资产（标普 500）名义敞口最高 200%，超出 configs/risk/default.yml 单一资产 35% 上限。
+    实盘信号用 SPY 复权收盘价（研究用 ^GSPC + 股息率构造的全收益，二者 1994–2025 年化差 0.07%），
+    实现为 SPY / SSO（2 倍）/ BIL（国库券）组合。

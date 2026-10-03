@@ -40,6 +40,39 @@ def trend_on(closes: list[float], sma_days: int) -> bool:
     return closes[-1] > sum(closes[-sma_days:]) / sma_days
 
 
+def vol_target_exposure(closes: list[float], rule: dict[str, Any]) -> float:
+    """Target exposure of the volatility-target rule from adjusted closes up to the signal day."""
+    if not trend_on(closes, int(rule["sma_days"])):
+        return 0.0
+    n = int(rule["vol_window_days"])
+    if len(closes) < n + 1:
+        raise ValueError(f"need {n + 1} closes for volatility")
+    rets = [closes[i] / closes[i - 1] - 1 for i in range(len(closes) - n, len(closes))]
+    mean = sum(rets) / n
+    vol = (sum((r - mean) ** 2 for r in rets) / (n - 1) * 252) ** 0.5
+    cap = float(rule["max_leverage"])
+    return cap if vol <= 0 else min(cap, float(rule["vol_target"]) / vol)
+
+
+def exposure_weights(exposure: float, one_x: str, leveraged: str, cash: str) -> dict[str, float]:
+    """Exposure in [0, 2] with a 1x fund, a 2x fund and T-bills: never both T-bills and 2x."""
+    if exposure <= 1:
+        w = {one_x: exposure, cash: 1 - exposure}
+    else:
+        w = {leveraged: exposure - 1, one_x: 2 - exposure}
+    return {s: round(v, 6) for s, v in w.items() if v > 1e-9}
+
+
+def current_exposure(
+    holdings: Holdings, prices: dict[str, float], one_x: str, leveraged: str
+) -> float:
+    value = {s: n * prices.get(s, 0.0) for s, n in holdings.positions.items()}
+    nav = holdings.cash_usd + sum(value.values())
+    if nav <= 0:
+        return 0.0
+    return (value.get(one_x, 0.0) + 2 * value.get(leveraged, 0.0)) / nav
+
+
 def generate(
     contract: dict[str, Any],
     bars: dict[str, list[Any]],
@@ -48,11 +81,13 @@ def generate(
     *,
     risk_on: str,
     risk_off: str,
+    one_x: str = "SPY",
+    signal: str | None = None,
     min_trade_usd: float = 100.0,
     quality: Any = None,
     breaker: float = BREAKER_DRAWDOWN,
 ) -> dict[str, Any]:
-    signal_symbol = contract["data"]["signal_and_asset"]
+    signal_symbol = signal or contract["data"]["signal_and_asset"]
     day = last_trading_day(as_of)
     reasons: list[str] = []
     upto = {s: [b for b in rows if b.day <= day] for s, rows in bars.items()}
@@ -66,10 +101,25 @@ def generate(
             if errors:
                 reasons.append(f"{s} quality: {errors[0]}")
     closes = [b.adj_close for b in upto[signal_symbol]]
-    on = trend_on(closes, int(contract["rule"]["sma_days"]))
-    target = risk_on if on else risk_off
-    weights = {target: 1.0}
+    rule = contract["rule"]
     prices = {s: rows[-1].close for s, rows in upto.items() if rows}
+    exposure: dict[str, float] | None = None
+    hold = False
+    if "vol_target" in rule:
+        aim = vol_target_exposure(closes, rule)
+        now = current_exposure(holdings, prices, one_x, risk_on)
+        on = aim > 0
+        invested = any(n > 0 for n in holdings.positions.values())
+        hold = (
+            invested
+            and (aim == 0) == (now < 1e-6)
+            and abs(aim - now) <= float(rule["rebalance_band"])
+        )
+        exposure = {"target": round(aim, 4), "current": round(now, 4)}
+        weights = exposure_weights(aim, one_x, risk_on, risk_off)
+    else:
+        on = trend_on(closes, int(rule["sma_days"]))
+        weights = {risk_on if on else risk_off: 1.0}
     nav_now = holdings.cash_usd + sum(n * prices.get(s, 0.0) for s, n in holdings.positions.items())
     if holdings.peak_nav_usd and nav_now < holdings.peak_nav_usd * (1 - breaker):
         reasons.append(
@@ -80,6 +130,8 @@ def generate(
     orders, nav = build_orders(
         weights, holdings, prices, reduce_only=reduce_only, min_trade_usd=min_trade_usd
     )
+    if hold:  # within the rebalance band: keep the current mix
+        orders = []
     approved = contract.get("status") == "promoted" and (contract.get("human_review") or {}).get(
         "approved"
     )
@@ -101,6 +153,7 @@ def generate(
             "close": round(closes[-1], 4),
             "sma": round(sma, 4),
             "trend_on": on,
+            **({"exposure": exposure} if exposure else {}),
         },
         "reduce_only": reduce_only,
         "reduce_only_reasons": reasons,
@@ -126,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capital", type=float, default=100_000.0)
     parser.add_argument("--risk-on", default="SSO")
     parser.add_argument("--risk-off", default="BIL")
+    parser.add_argument("--one-x", default="SPY", help="1x fund (volatility-target rule)")
+    parser.add_argument(
+        "--signal-symbol",
+        help="adjusted closes for the signal (default: the contract's; SPY for an index study)",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("orders"))
     parser.add_argument(
         "--breaker",
@@ -137,7 +195,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     contract = load_lt_contract(args.contract)
     store = open_store(load_settings())
-    symbols = {contract["data"]["signal_and_asset"], args.risk_on, args.risk_off}
+    signal_symbol = args.signal_symbol or contract["data"]["signal_and_asset"]
+    symbols = {signal_symbol, args.risk_on, args.risk_off}
+    if "vol_target" in contract["rule"]:
+        symbols.add(args.one_x)
     holdings = load_holdings(args.holdings, args.capital)
     symbols |= set(holdings.positions)
     bars = {s: store.read_bars(s) for s in sorted(symbols)}
@@ -148,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
         args.as_of,
         risk_on=args.risk_on,
         risk_off=args.risk_off,
+        one_x=args.one_x,
+        signal=signal_symbol,
         quality=lambda s, b: [str(e) for e in audit_bars(s, b).errors],
         breaker=args.breaker,
     )
@@ -174,7 +237,13 @@ def main(argv: list[str] | None = None) -> int:
             log.write(json.dumps(entry, ensure_ascii=False) + "\n")
     print(
         f"{intent['signal_day']}：{sig['symbol']} {sig['close']:.2f} {state}（{sig['sma']:.2f}），"
-        f"目标 {next(iter(intent['target_weights']))}，订单 {len(intent['orders'])} 笔"
+        + (
+            "目标敞口 {target:.2f} 倍（当前 {current:.2f}），".format(**sig["exposure"])
+            if "exposure" in sig
+            else ""
+        )
+        + f"目标 {' '.join(f'{s} {w:.0%}' for s, w in intent['target_weights'].items())}，"
+        f"订单 {len(intent['orders'])} 笔"
         + (f"，只减仓：{intent['reduce_only_reasons'][0]}" if intent["reduce_only"] else "")
     )
     return 0

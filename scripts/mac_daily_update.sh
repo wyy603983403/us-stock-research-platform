@@ -6,7 +6,7 @@
 #   4 每周一：拆股记录、Fama-French 因子
 #   5 质量门禁 + 数据目录
 #   6 每月最后一个交易日之后：趋势基线订单意向演练（只写文件，不下单）
-#   7 每个交易日：SPY 均线 + 2 倍杠杆演练（信号变化才出订单；先记账再出单）
+#   7 每个交易日：均线 + 波动率目标（用户 2026-10-03 批准；需要调仓才出订单；先记账再出单）
 # 任何一步失败都不影响后面各步；汇总见 logs/daily_update.log。
 #   bash scripts/mac_daily_update.sh            # 更新全部
 #   bash scripts/mac_daily_update.sh --dry-run  # 只看日线会做什么，不写入（其余步骤跳过）
@@ -91,12 +91,13 @@ fi
 LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime
 from us_stock_research.quality.intraday import last_closed_session
 print(last_closed_session(datetime.now(UTC)).isoformat())")
-echo "== 杠杆趋势演练（${LASTDAY}，只写文件）"
-.venv/bin/usr-rehearsal-fill --study spy_trend_leverage_2x --cost-bps 10 2>&1 | tail -n 3 \
+echo "== 均线 + 波动率目标（已批准，${LASTDAY}，只写文件）"
+.venv/bin/usr-rehearsal-fill --study sp500_trend_voltarget --cost-bps 10 2>&1 | tail -n 3 \
   || echo "  演练记账失败"
-LT_LEDGER=portfolio/rehearsal/spy_trend_leverage_2x.yml
+LT_LEDGER=portfolio/rehearsal/sp500_trend_voltarget.yml
 LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
-# 熔断线 40%：用户 2026-10-01 决定（2 倍杠杆回测最大回撤 −38%；15% 会让 38% 的交易日处于只减仓）
-.venv/bin/usr-lt-intent --contract research/spy-trend-leverage-2x/study.yml --as-of "$LASTDAY" --breaker 0.40 \
-  $LT_HOLD 2>&1 | tail -n 1 || echo "  生成失败"
+# 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
+.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
+  --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
+  | tail -n 1 || echo "  生成失败"
 echo "完成 $(date '+%Y-%m-%d %H:%M')"
