@@ -23,5 +23,5 @@ rsync -az -e "$RSH" scripts/server_web_setup.sh "$HOST:/opt/usr-trade/app/script
 printf '%s\n%s\n' "$U" "$P" | "${SSH[@]}" "bash /opt/usr-trade/app/scripts/server_web_setup.sh '$SITE' '$PORT'"
 unset P P2
 echo
-echo "如果打不开：到云服务商控制台的“安全组/防火墙”放行 TCP $PORT（用域名时还要放行 80）。"
+echo "如果打不开：到云服务商控制台的“安全组/防火墙”放行上面“完成”一行里的端口（用域名时还要放行 80）。"
 [[ "$SITE" =~ ^[0-9.]+$ ]] && echo "用 IP 访问时浏览器会提示证书不受信任（自签证书），选择“继续访问”即可；有域名可换成正式证书。"

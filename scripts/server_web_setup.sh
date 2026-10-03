@@ -20,12 +20,27 @@ if ! /usr/local/bin/caddy version 2>/dev/null | grep -q "v$CADDY_VERSION"; then
   install -m 755 "$T/caddy" /usr/local/bin/caddy; rm -rf "$T"
 fi
 id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+mkdir -p /var/lib/caddy && chown -R caddy:caddy /var/lib/caddy && chmod 750 /var/lib/caddy
+command -v restorecon >/dev/null && restorecon -R /var/lib/caddy /usr/local/bin/caddy 2>/dev/null || true
+
+# 端口被别的程序（比如已有的 nginx 网站）占用时不去动它，改用 8443
+port_owner() { ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'users:(("[^"]*"' | head -n1 | cut -d'"' -f2; }
+systemctl stop usr-web.service 2>/dev/null || true
+OWNER=$(port_owner "$PORT")
+if [ -n "$OWNER" ] && [ "$OWNER" != caddy ]; then
+  if [ "$PORT" = 443 ] && [ -z "$(port_owner 8443)" ]; then
+    echo "  443 端口已被 $OWNER 占用（不改动它），网页入口改用 8443"; PORT=8443
+  else
+    echo "端口 $PORT 已被 $OWNER 占用，请换一个端口重跑（第 4 个参数）"; exit 1
+  fi
+fi
 
 HASH=$(/usr/local/bin/caddy hash-password --plaintext "$WEB_PASS")
 unset WEB_PASS
 if [[ "$SITE" =~ ^[0-9.]+$ ]]; then
   # 只有 IP：用 Caddy 自签证书（浏览器第一次会提示“不安全”，确认一次即可；传输仍加密）
-  GLOBAL="default_sni $SITE"; TLS="tls internal"; ADDR="https://$SITE:$PORT"
+  GLOBAL="default_sni $SITE
+	auto_https disable_redirects"; TLS="tls internal"; ADDR="https://$SITE:$PORT"
 else
   GLOBAL=""; TLS=""; ADDR="$SITE"; [ "$PORT" = 443 ] || ADDR="$SITE:$PORT"
 fi
@@ -84,7 +99,9 @@ ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter c
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 ProtectSystem=full
+StateDirectory=caddy
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
