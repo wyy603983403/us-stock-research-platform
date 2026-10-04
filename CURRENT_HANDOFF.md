@@ -67,3 +67,4 @@
 31. 2026-10-04 用户批准 vt_plus_defensive（选项 A），取代 sp500_trend_voltarget 进入阶段 1（3 个月复核重新计）。
     出单 `usr-mix-intent --model-start 2026-10-02`（每日重放研究模型，模型交易日或偏离 >5% 才出单）；`usr-status` 支持 sleeve_mix；
     服务器流水线、paper_broker.yml、Mac 脚本已切换；服务器 orders/sp500_trend_voltarget/2026-10-02 作废（不再记账）。
+32. 每份新订单清单由 `usr-verify-intent`（独立第二实现）自动复核，核对表写进清单 .md、结果进通知；不一致则清单改名 .json.rejected 搁置。

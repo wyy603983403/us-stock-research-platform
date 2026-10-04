@@ -32,6 +32,17 @@ print(last_closed_session(datetime.now(UTC)).isoformat())")
 LT_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
   --breaker 0.40 $HOLD 2>&1 | tail -n 1) || LT_OUT="生成失败"
 echo "$LT_OUT"
+# 新订单清单：另一套代码独立复核，核对表写进清单 .md，结果附在通知里
+VERIFY=""
+if [ -f "orders/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "orders/$STUDY/$LASTDAY.md" 2>/dev/null; then
+  VERIFY=$(.venv/bin/usr-verify-intent --intent "orders/$STUDY/$LASTDAY.json" --contract $CONTRACT $HOLD 2>&1 | tail -n 1)
+  echo "$VERIFY"
+  case "$VERIFY" in 独立复核：一致) ;; *)
+    # 复核不一致或复核本身出错：清单改名搁置，不记账、不发模拟单，等人工处理
+    mv "orders/$STUDY/$LASTDAY.json" "orders/$STUDY/$LASTDAY.json.rejected"
+    echo "已搁置 orders/$STUDY/$LASTDAY.json（复核未通过）";;
+  esac
+fi
 if [ "$PAPER_ON" = "True" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
 ST_OUT=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings "$LEDGER" \
   --update-report "artifacts/update_$STAMP.json" 2>&1); ST_RC=$?
@@ -39,6 +50,10 @@ echo "$ST_OUT"
 NOTE=""
 case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：$LT_OUT";; *) NOTE="订单生成异常：$LT_OUT";; esac
 case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：$LT_OUT";; esac
+[ -n "$VERIFY" ] && NOTE="${NOTE:+$NOTE
+}$VERIFY"
+case "$VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 独立复核未通过，该清单已搁置（不记账、不下模拟单）
+$NOTE";; esac
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE
 }$(echo "$ST_OUT" | grep '需要关注')"
 # 每个交易日都发一条简报（只发一次：第二次运行仅在有异常时发）

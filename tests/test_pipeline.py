@@ -2252,3 +2252,62 @@ def test_mix_intent_model_and_orders() -> None:
     me = next(r for r in path if "month_end" in r["events"] and r["day"] > start)
     it3 = mi.generate(mix, vt, bars, filled, me["day"], start)
     assert "month_end" in it3["signal"]["triggers"]
+
+
+def test_verify_intent_independent_replay_matches() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.trading import mix_intent as mi
+    from us_stock_research.trading import verify_intent as vi
+    from us_stock_research.trading.order_intent import Holdings
+
+    days = trading_days(date(2025, 1, 2), date(2026, 6, 30))
+    rng = random.Random(23)
+    series = {}
+    for sym, drift, vol in (
+        ("SPY", 0.0005, 0.012),
+        ("SSO", 0.001, 0.024),
+        ("BIL", 0.00015, 0.0),
+        ("TLT", 0.0, 0.009),
+        ("IEF", 0.0001, 0.004),
+        ("GLD", 0.0004, 0.01),
+    ):
+        p, xs = 100.0, []
+        for _ in days:
+            p *= 1 + rng.gauss(drift, vol)
+            xs.append(p)
+        series[sym] = xs  # fmt: skip
+    adj = {s: dict(zip(days, xs, strict=True)) for s, xs in series.items()}
+    vt_rule = {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25, "max_leverage": 2.0,
+               "rebalance_band": 0.25}  # fmt: skip
+    slots = ["TLT", "IEF", "GLD"]
+    start = date(2025, 11, 3)
+    path = mi.model_path(adj, days, start, vt_rule, {"sma_days": 200, "aggressive_weight": 0.5},
+                         slots)  # fmt: skip
+    events = sum(bool(r["events"]) for r in path)
+    assert events > 5  # the sample exercises switches and month ends
+    for row in path[::7] + [path[-1]]:
+        rec = vi.replay(adj, start, row["day"], sma_days=200, vol_days=20, vol_target=0.25,
+                        cap=2.0, band=0.25, aggressive_weight=0.5, slots=slots)  # fmt: skip
+        keys = set(rec["weights"]) | set(row["weights"])
+        assert max(abs(rec["weights"].get(k, 0) - row["weights"].get(k, 0)) for k in keys) < 1e-5
+    bars = {s: [DailyBar(d, x, x, x, x, x, 1) for d, x in zip(days, xs, strict=True)]
+            for s, xs in series.items()}  # fmt: skip
+    mix = {
+        "name": "mix",
+        "status": "promoted",
+        "human_review": {"approved": True},
+        "data": {"defensive_assets": slots},
+        "rule": {"sma_days": 200, "aggressive_weight": 0.5},
+    }
+    holdings = Holdings(cash_usd=100_000.0, peak_nav_usd=100_000.0)
+    it = mi.generate(mix, {"rule": vt_rule}, bars, holdings, start, start)
+    rec = vi.replay(adj, start, start, sma_days=200, vol_days=20, vol_target=0.25, cap=2.0,
+                    band=0.25, aggressive_weight=0.5, slots=slots)  # fmt: skip
+    prices = {s: xs[days.index(start)] for s, xs in series.items()}
+    exp = vi.expected_orders(rec["weights"], {}, 100_000.0, prices)
+    assert vi.check(it, rec, exp) == []
+    bad = dict(it, orders=[dict(o, shares=o["shares"] + 1) for o in it["orders"]])
+    assert vi.check(bad, rec, exp)
+    assert "结论：一致" in vi.render(rec, it, [])
