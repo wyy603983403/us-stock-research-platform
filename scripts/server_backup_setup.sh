@@ -19,6 +19,7 @@ REPO="$1"; BASE=/opt/usr-trade; U=usrtrade; H=$BASE/home
 command -v git >/dev/null || (dnf install -y -q git || yum install -y -q git || (apt-get update -qq && apt-get install -y -qq git)) >/dev/null 2>&1
 f=$BASE/.env; t=$(mktemp); grep -v '^OPS_REPO=' $f > $t || true; echo "OPS_REPO=$REPO" >> $t; cat $t > $f; rm -f $t
 mkdir -p $BASE/backup && chown $U:$U $BASE/backup
+chown -R $U:$U $BASE/app/scripts $BASE/app/ops && chmod -R u+rwX,go+rX $BASE/app/scripts $BASE/app/ops
 if [ ! -f $H/.ssh/ops_backup_ed25519 ]; then
   su -s /bin/bash $U -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keygen -q -t ed25519 -N '' -C usr-trade-ops-backup -f ~/.ssh/ops_backup_ed25519"
   echo ""
