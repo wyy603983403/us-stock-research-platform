@@ -22,3 +22,4 @@ artifacts/*
 logs/
 orders/
 portfolio/
+.tmp_export/
