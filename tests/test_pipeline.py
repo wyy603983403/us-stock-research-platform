@@ -2197,3 +2197,58 @@ def test_update_retries_throttling_within_budget(tmp_path: Path) -> None:
     assert [w for w in waits if w] == [30.0, 90.0, 30.0]
     assert out["retried"] == {"OK": 2, "SLOW": 1} and "SLOW" in out["failed"]
     assert out["retry_wait_seconds"] == 150.0
+
+
+def test_mix_intent_model_and_orders() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.trading import mix_intent as mi
+    from us_stock_research.trading.order_intent import Holdings
+
+    days = trading_days(date(2025, 1, 2), date(2026, 3, 31))
+    rng = random.Random(11)
+
+    def walk(drift: float, vol: float) -> list[float]:
+        out, p = [], 100.0
+        for _ in days:
+            p *= 1 + rng.gauss(drift, vol)
+            out.append(p)
+        return out
+
+    series = {"SPY": walk(0.0008, 0.006), "SSO": walk(0.0016, 0.012),
+              "BIL": walk(0.00015, 0.0), "TLT": walk(-0.001, 0.008),
+              "IEF": walk(0.0003, 0.003), "GLD": walk(0.001, 0.009)}  # fmt: skip
+    bars = {s: [DailyBar(d, x, x, x, x, x, 1) for d, x in zip(days, xs, strict=True)]
+            for s, xs in series.items()}  # fmt: skip
+    vt_rule = {"sma_days": 200, "vol_window_days": 20, "vol_target": 0.25, "max_leverage": 2.0,
+               "rebalance_band": 0.25}  # fmt: skip
+    mix = {"name": "mix", "status": "promoted", "human_review": {"approved": True},
+           "data": {"defensive_assets": ["TLT", "IEF", "GLD"]},
+           "rule": {"sma_days": 200, "aggressive_weight": 0.5}}  # fmt: skip
+    vt = {"rule": vt_rule}
+    start = date(2025, 12, 1)
+    adj = {s: dict(zip(days, xs, strict=True)) for s, xs in series.items()}
+    path = mi.model_path(adj, days, start, vt_rule, mix["rule"], ["TLT", "IEF", "GLD"])
+    assert path[0]["events"] == ["start"] and path[0]["day"] == start
+    for row in path:
+        assert abs(sum(row["weights"].values()) - 1) < 1e-5
+        if mi.month_end(row["day"]):
+            assert "month_end" in row["events"] and abs(row["aggressive_share"] - 0.5) < 1e-12
+    assert not path[0]["slots_on"]["TLT"] and path[0]["slots_on"]["GLD"]  # TLT falling
+    # fresh account: orders to the model weights, about half in the aggressive sleeve
+    fresh = Holdings(cash_usd=100_000.0, peak_nav_usd=100_000.0)
+    it = mi.generate(mix, vt, bars, fresh, start, start)
+    assert it["mode"] == "live-candidate" and it["orders"] and "start" in it["signal"]["triggers"]
+    held = {o["symbol"]: float(o["shares"]) for o in it["orders"] if o["side"] == "BUY"}
+    spent = sum(o["est_value_usd"] for o in it["orders"])
+    filled = Holdings(cash_usd=100_000.0 - spent, positions=held, peak_nav_usd=100_000.0)
+    # next quiet day: no model event and no drift -> no orders
+    quiet = next(r for r in path[1:] if not r["events"])
+    it2 = mi.generate(mix, vt, bars, filled, quiet["day"], start)
+    assert it2["signal"]["max_drift"] < 0.05 and it2["orders"] == []
+    assert "订单 0 笔" in mi.summary_line(it2)
+    # month end: rebalance orders appear
+    me = next(r for r in path if "month_end" in r["events"] and r["day"] > start)
+    it3 = mi.generate(mix, vt, bars, filled, me["day"], start)
+    assert "month_end" in it3["signal"]["triggers"]

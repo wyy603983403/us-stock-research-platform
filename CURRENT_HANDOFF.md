@@ -64,3 +64,6 @@
     只开放 /dashboard.html 与 /status.json；`scripts/server_web.sh` 设置/改密码。飞书机器人通知 `FEISHU_WEBHOOK`（scripts/notify.sh）。
 29. 纳指 100 趋势 + 波动率目标（预先登记 4f16c4c）未通过：年化 12.7% vs 14.6%，见 docs/results/ndx-trend-voltarget.md。试验登记 10 组。
 30. 组合研究 vt_plus_defensive（预先登记 3c039a2，`usr-sleeve-mix`）四项通过：夏普 0.84 vs 0.64，年化 7.8% vs 10.6%，回撤约减半；等待用户审查。usr-update 已加 429 重试。
+31. 2026-10-04 用户批准 vt_plus_defensive（选项 A），取代 sp500_trend_voltarget 进入阶段 1（3 个月复核重新计）。
+    出单 `usr-mix-intent --model-start 2026-10-02`（每日重放研究模型，模型交易日或偏离 >5% 才出单）；`usr-status` 支持 sleeve_mix；
+    服务器流水线、paper_broker.yml、Mac 脚本已切换；服务器 orders/sp500_trend_voltarget/2026-10-02 作废（不再记账）。

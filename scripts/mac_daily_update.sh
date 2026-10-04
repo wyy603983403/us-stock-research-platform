@@ -6,7 +6,8 @@
 #   4 每周一：拆股记录、Fama-French 因子
 #   5 质量门禁 + 数据目录
 #   6 每月最后一个交易日之后：趋势基线订单意向演练（只写文件，不下单）
-#   7 每个交易日：均线 + 波动率目标（用户 2026-10-03 批准；需要调仓才出订单；先记账再出单）
+#   7 每个交易日：组合 vt_plus_defensive（用户 2026-10-04 批准；需要调仓才出订单；先记账再出单）
+#     平时由云服务器运行（portfolio/.vt_on_server 存在时 Mac 跳过）
 # 任何一步失败都不影响后面各步；汇总见 logs/daily_update.log。
 #   bash scripts/mac_daily_update.sh            # 更新全部
 #   bash scripts/mac_daily_update.sh --dry-run  # 只看日线会做什么，不写入（其余步骤跳过）
@@ -92,29 +93,30 @@ if [ -f portfolio/.vt_on_server ]; then
 else
   # 每个交易日：SPY 200 日均线 + 2 倍杠杆的演练（先按今天收盘记昨天的订单，再按今天收盘出新订单）
   LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime; from us_stock_research.quality.intraday import last_closed_session as f; print(f(datetime.now(UTC)).isoformat())")
-  echo "== 均线 + 波动率目标（已批准，${LASTDAY}，只写文件）"
-  .venv/bin/usr-rehearsal-fill --study sp500_trend_voltarget --cost-bps 10 2>&1 | tail -n 3 \
+  STUDY=vt_plus_defensive; CONTRACT=research/vt-plus-defensive/study.yml; MODEL_START=2026-10-02
+  echo "== 组合 ${STUDY}（已批准，${LASTDAY}，只写文件）"
+  .venv/bin/usr-update TLT IEF GLD --execute >/dev/null 2>&1 || true
+  .venv/bin/usr-rehearsal-fill --study $STUDY --cost-bps 10 2>&1 | tail -n 3 \
     || echo "  演练记账失败"
-  LT_LEDGER=portfolio/rehearsal/sp500_trend_voltarget.yml
+  LT_LEDGER=portfolio/rehearsal/$STUDY.yml
   PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))" 2>/dev/null)
   if [ "$PAPER_ON" = "True" ]; then
     # 阶段 2：持仓以 Alpaca 模拟账户为准（先对账，不一致则不发新单）
     echo "== 模拟盘（Alpaca paper）对账"
     .venv/bin/usr-paper --sync 2>&1 | tail -n 5
-    LT_LEDGER=portfolio/paper/sp500_trend_voltarget.yml
+    LT_LEDGER=portfolio/paper/$STUDY.yml
   fi
   LT_HOLD=""; [ -f "$LT_LEDGER" ] && LT_HOLD="--holdings $LT_LEDGER"
-  # 2026-10-03 起改为用户批准的“均线 + 波动率目标”（SPY/SSO/BIL）；熔断线 40% 为用户决定
-  LT_OUT=$(.venv/bin/usr-lt-intent --contract research/sp500-trend-voltarget/study.yml --as-of "$LASTDAY" \
-    --signal-symbol SPY --one-x SPY --risk-on SSO --risk-off BIL --breaker 0.40 $LT_HOLD 2>&1 \
-    | tail -n 1) || LT_OUT="生成失败"
+  # 2026-10-04 起为用户批准的组合（SPY/SSO/BIL + TLT/IEF/GLD）；熔断线 40% 为用户决定
+  LT_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
+    --breaker 0.40 $LT_HOLD 2>&1 | tail -n 1) || LT_OUT="生成失败"
   echo "  $LT_OUT"
   if [ "$PAPER_ON" = "True" ]; then
     echo "== 模拟盘下单（收盘竞价单，次日收盘成交）"
     .venv/bin/usr-paper --submit 2>&1 | tail -n 12
   fi
   echo "== 状态（artifacts/status.md）"
-  ST_OUT=$(.venv/bin/usr-status --contract research/sp500-trend-voltarget/study.yml --holdings "$LT_LEDGER" \
+  ST_OUT=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings "$LT_LEDGER" \
     --update-report "artifacts/universe/update_${STAMP}.json" 2>&1); ST_RC=$?
   echo "$ST_OUT" | sed 's/^/  /'
   # 有新订单、只减仓、生成失败或状态需要关注时，在 Mac 上弹通知

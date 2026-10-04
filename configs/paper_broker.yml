@@ -2,5 +2,5 @@
 # 实盘券商未定（盈透账户审核中）。密钥放 .env：ALPACA_PAPER_KEY_ID / ALPACA_PAPER_SECRET_KEY（模拟账户自己的密钥）。
 # enabled 只能由用户在阶段 1（连续 3 个月订单与手工复核一致）通过后改为 true。
 enabled: false
-study: sp500_trend_voltarget
-holdings: portfolio/paper/sp500_trend_voltarget.yml
+study: vt_plus_defensive
+holdings: portfolio/paper/vt_plus_defensive.yml

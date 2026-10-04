@@ -58,6 +58,7 @@ def chart_series(
     yields_pct: list[float | None],
     nav_rows: list[tuple[date, float, float]],
     signal_days: int = 260,
+    model_index: dict[date, float] | None = None,
 ) -> dict[str, Any]:
     """Curves for the dashboard: portfolio, research model and SPY indexed to 100 at the first
     valuation; exposure history; SPY and its moving average over the last year."""
@@ -76,23 +77,27 @@ def chart_series(
     if not nav_rows:
         return out
     start, nav0 = nav_rows[0][0], nav_rows[0][1]
-    sim = simulate_vol_target(
-        days,
-        closes,
-        yields_pct,
-        sma_days=n,
-        vol_window=int(rule["vol_window_days"]),
-        vol_target=float(rule["vol_target"]),
-        max_leverage=float(rule["max_leverage"]),
-        band=float(rule["rebalance_band"]),
-        cost_bps=float(rule["trading_cost_bps"]),
-    )
-    model: dict[date, float] = {start: 1.0}
-    g = 1.0
-    for d, r, _, _ in sim:
-        if d > start:
-            g *= 1 + r
-            model[d] = g
+    if model_index is not None:
+        base = model_index.get(start)
+        model = {d: v / base for d, v in model_index.items() if base and d >= start}
+    else:
+        sim = simulate_vol_target(
+            days,
+            closes,
+            yields_pct,
+            sma_days=n,
+            vol_window=int(rule["vol_window_days"]),
+            vol_target=float(rule["vol_target"]),
+            max_leverage=float(rule["max_leverage"]),
+            band=float(rule["rebalance_band"]),
+            cost_bps=float(rule["trading_cost_bps"]),
+        )
+        model = {start: 1.0}
+        g = 1.0
+        for d, r, _, _ in sim:
+            if d > start:
+                g *= 1 + r
+                model[d] = g
     price = dict(zip(days, closes, strict=True))
     for d, v, _ in nav_rows:
         if d in model and d in price and start in price:
@@ -156,11 +161,15 @@ def build(
     leveraged: str,
     breaker: float,
     data_issues: list[str],
+    model_index: dict[date, float] | None = None,
+    target_exposure: float | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rule = contract["rule"]
     days = [d for d, _ in signal_closes]
     closes = [c for _, c in signal_closes]
-    aim = vol_target_exposure(closes, rule)
+    trend = vol_target_exposure(closes, rule) > 0
+    aim = vol_target_exposure(closes, rule) if target_exposure is None else target_exposure
     now = current_exposure(holdings, prices, one_x, leveraged)
     sma = sum(closes[-int(rule["sma_days"]) :]) / int(rule["sma_days"])
     nav = nav_history[-1][1]
@@ -172,7 +181,10 @@ def build(
     tracking: dict[str, Any] | None = None
     if len(nav_history) >= 2:
         start, nav0 = nav_history[0]
-        model = model_growth(rule, days, closes, forward_fill(days, yields), start)
+        if model_index is not None and start in model_index:
+            model = model_index[max(model_index)] / model_index[start]
+        else:
+            model = model_growth(rule, days, closes, forward_fill(days, yields), start)
         actual = nav / nav0
         span_years = max((nav_history[-1][0] - start).days / 365.25, 1 / 365.25)
         gap = actual - model
@@ -194,8 +206,9 @@ def build(
             "distance_to_sma": closes[-1] / sma - 1,
             "target_exposure": aim,
             "current_exposure": now,
-            "trend_on": aim > 0,
+            "trend_on": trend,
         },
+        **(extra or {}),
         "portfolio": {"nav": nav, "peak": peak, "drawdown": drawdown, "breaker": breaker},
         "tracking": tracking,
         "attention": attention,
@@ -207,12 +220,22 @@ def render(s: dict[str, Any], holdings: Holdings, source: str) -> str:
     lines = [
         f"# 交易系统状态（{s['day']}）",
         "",
-        f"策略：均线 + 波动率目标（已批准，{source}）。只生成文件/模拟单，不涉及真钱。",
+        f"策略：{s.get('strategy_label', '均线 + 波动率目标')}（已批准，{source}）。"
+        "只生成文件/模拟单，不涉及真钱。",
         "",
         "## 信号",
         f"- SPY 复权收盘 {sig['close']:.2f}，200 日均线 {sig['sma']:.2f}"
         f"（{sig['distance_to_sma']:+.1%}，{'上方' if sig['trend_on'] else '下方'}）",
-        f"- 目标敞口 {sig['target_exposure']:.2f} 倍，当前 {sig['current_exposure']:.2f} 倍",
+        f"- 目标敞口 {sig['target_exposure']:.2f} 倍，当前 {sig['current_exposure']:.2f} 倍"
+        + ("（股票总敞口，占净值）" if s.get("slots_on") else ""),
+        *(
+            [
+                "- 防守部分："
+                + "，".join(f"{k} {'持有' if v else '转国库券'}" for k, v in s["slots_on"].items())
+            ]
+            if s.get("slots_on")
+            else []
+        ),
         "",
         "## 组合",
         f"- 净值 ${pf['nav']:,.2f}，最高 ${pf['peak']:,.2f}，回撤 {pf['drawdown']:.1%}"
@@ -253,10 +276,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--capital", type=float, default=100_000.0, help="本金（还没有持仓文件时按全部现金显示）"
     )
+    parser.add_argument(
+        "--model-start", type=date.fromisoformat, help="sleeve_mix：模型重放起点（与出单一致）"
+    )
     args = parser.parse_args(argv)
     pending = not args.holdings.exists()
     args.holdings.parent.mkdir(parents=True, exist_ok=True)
-    contract = load_lt_contract(args.contract)
+    mix = None
+    if (yaml.safe_load(args.contract.read_text()) or {}).get("kind") == "sleeve_mix":
+        from us_stock_research.research.sleeve_mix import load_mix_contract
+
+        mix = load_mix_contract(args.contract)
+        if args.model_start is None:
+            parser.error("--model-start is required for a sleeve_mix contract")
+        contract = load_lt_contract(Path(mix["data"]["aggressive_sleeve"]))
+    else:
+        contract = load_lt_contract(args.contract)
     gates = yaml.safe_load(args.gates.read_text()) if args.gates.exists() else {}
     settings = load_settings()
     store = open_store(settings)
@@ -265,7 +300,8 @@ def main(argv: list[str] | None = None) -> int:
     day = bars[-1].day
     prices = {}
     data_issues = []
-    for s in {args.one_x, args.risk_on, args.risk_off, *holdings.positions}:
+    extra_symbols = list(mix["data"]["defensive_assets"]) if mix else []
+    for s in {args.one_x, args.risk_on, args.risk_off, *extra_symbols, *holdings.positions}:
         sb = store.read_bars(s)
         prices[s] = sb[-1].close
         if sb[-1].day != day:
@@ -283,6 +319,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     rows = TableStore.from_settings(settings).read("macro", "DTB3", "date, value")
     yields = {d: float(v) for d, v in rows if v is not None and v == v}
+    model_index: dict[date, float] | None = None
+    overrides: dict[str, Any] = {}
+    if mix is not None:
+        from us_stock_research.trading.mix_intent import model_path
+
+        slots = [str(x) for x in mix["data"]["defensive_assets"]]
+        syms = [args.one_x, args.risk_on, args.risk_off, *slots]
+        adj = {x: {b.day: b.adj_close for b in store.read_bars(x) if b.adj_close > 0} for x in syms}
+        common = sorted(set.intersection(*(set(v) for v in adj.values())))
+        path = model_path(adj, common, args.model_start, contract["rule"], mix["rule"], slots)
+        model_index = {r["day"]: r["value"] for r in path}
+        last = path[-1]
+        w = last["weights"]
+        overrides = {
+            "model_index": model_index,
+            "target_exposure": w.get(args.one_x, 0.0) + 2 * w.get(args.risk_on, 0.0),
+            "extra": {
+                "slots_on": last["slots_on"],
+                "aggressive_share": last["aggressive_share"],
+                "target_weights": w,
+                "strategy_label": "标普趋势 + 波动率目标 50% / 防守趋势（TLT、IEF、GLD）50%",
+            },
+        }
     status = build(
         contract,
         gates,
@@ -295,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         leveraged=args.risk_on,
         breaker=args.breaker,
         data_issues=data_issues,
+        **overrides,
     )
     source = "Alpaca 模拟盘" if "paper" in str(args.holdings) else "演练账本"
     if pending:
@@ -307,17 +367,18 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         **status,
         "source": source,
-        "study": contract["name"],
+        "study": (mix or contract)["name"],
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "holdings": {"cash": holdings.cash_usd, "positions": holdings.positions},
         "prices": prices,
-        "orders": recent_orders(args.orders_dir / contract["name"]),
+        "orders": recent_orders(args.orders_dir / (mix or contract)["name"]),
         **chart_series(
             contract["rule"],
             days_all,
             [b.adj_close for b in bars],
             forward_fill(days_all, yields),
             read_nav(args.holdings.with_suffix(".nav.csv")),
+            model_index=model_index,
         ),
     }
     text = json.dumps(payload, ensure_ascii=False, default=str)

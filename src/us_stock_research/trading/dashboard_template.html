@@ -67,7 +67,7 @@ ul.att{margin:0;padding-left:18px}
 <body>
 <main>
 <header>
- <h1>交易系统监控 · 均线 + 波动率目标</h1>
+ <h1 id="title">交易系统监控 · 均线 + 波动率目标</h1>
  <div class="sub" id="meta"></div>
 </header>
 <div class="banner" id="banner"></div>
@@ -111,11 +111,15 @@ b.append(badge, msg);
 
 // tiles
 const sig = S.signal, pf = S.portfolio, tr = S.tracking;
+if (S.strategy_label) $('title').textContent = '交易系统监控 · ' + S.strategy_label;
+const slotText = S.slots_on ? Object.entries(S.slots_on)
+  .map(([k, on]) => `${k} ${on ? '持有' : '国库券'}`).join(' · ') : '';
 const tiles = [
   ['净值', pf ? usd(pf.nav) : '—', pf ? `最高 ${usd(pf.peak)}` : ''],
   ['回撤', pf ? pct(pf.drawdown) : '—', pf ? `熔断线 −${(pf.breaker * 100).toFixed(0)}%` : ''],
-  ['目标 / 当前仓位', `${sig.target_exposure.toFixed(2)} / ${sig.current_exposure.toFixed(2)} 倍`,
-   sig.trend_on ? '趋势向上' : '趋势向下：持有国库券'],
+  [S.slots_on ? '股票敞口 目标 / 当前' : '目标 / 当前仓位',
+   `${sig.target_exposure.toFixed(2)} / ${sig.current_exposure.toFixed(2)} 倍`,
+   (sig.trend_on ? '趋势向上' : '趋势向下：持有国库券') + (slotText ? ' · 防守：' + slotText : '')],
   ['SPY 距 200 日均线', pct(sig.distance_to_sma), `收盘 ${sig.close.toFixed(2)} · 均线 ${sig.sma.toFixed(2)}`],
   ['与研究模型偏差', tr ? pct(tr.gap, 2) : '—', tr ? `自 ${tr.since}` : '首笔成交后开始计算'],
 ];

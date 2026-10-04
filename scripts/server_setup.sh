@@ -29,6 +29,14 @@ if [ ! -f $BASE/data/parquet/daily/SPY.parquet ]; then
   su -s /bin/bash usrtrade -c "cd $APP && .venv/bin/usr-collect-daily SPY SSO BIL --start 1993-01-01 --execute >/dev/null \
     && .venv/bin/usr-collect-macro --execute >/dev/null" && echo "   SPY/SSO/BIL 与 FRED 利率已下载"
 fi
+# 组合策略 vt_plus_defensive（2026-10-04 批准）的防守部分
+for s in TLT IEF GLD; do
+  if [ ! -f $BASE/data/parquet/daily/$s.parquet ]; then
+    su -s /bin/bash usrtrade -c "cd $APP && .venv/bin/usr-collect-daily $s --start 2002-01-01 --execute >/dev/null" \
+      && echo "   $s 已下载" || echo "   $s 下载失败（下次部署重试）"
+    sleep 5
+  fi
+done
 
 echo "-- 通知（ntfy.sh；没有配置时生成一个随机频道）"
 if ! grep -q '^NTFY_TOPIC=' $BASE/.env; then
