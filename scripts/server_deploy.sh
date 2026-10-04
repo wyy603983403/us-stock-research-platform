@@ -11,13 +11,13 @@ SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$HOST")
 RSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new"
 
 echo "== 1/4 上传代码"
-"${SSH[@]}" "mkdir -p $APP /opt/usr-trade/state; for p in rsync curl; do command -v \$p >/dev/null || \
+"${SSH[@]}" "mkdir -p $APP /opt/usr-trade/state; for p in rsync curl git; do command -v \$p >/dev/null || \
   (apt-get update -qq && apt-get install -y -qq \$p) >/dev/null 2>&1 || yum install -y -q \$p >/dev/null 2>&1 || dnf install -y -q \$p >/dev/null; done"
 rsync -az --delete -e "$RSH" \
   --exclude '.venv' --exclude '__pycache__' --exclude '.git' --exclude 'artifacts' \
   --exclude 'orders' --exclude 'portfolio' --exclude 'logs' --exclude 'data' --exclude '.env' \
   --exclude '.usr_sync_*' --exclude 'backup_*' \
-  src scripts configs research docs pyproject.toml README.md AGENTS.md "$HOST:$APP/"
+  src scripts configs research docs ops pyproject.toml README.md AGENTS.md "$HOST:$APP/"
 
 echo "== 2/4 迁移已批准策略的订单与账本（服务器已有的不覆盖）"
 for d in orders/sp500_trend_voltarget portfolio/rehearsal portfolio/paper; do

@@ -1,0 +1,38 @@
+# 由服务器备份脚本放进运行记录仓库（us-stock-ops），不在研究仓库里运行。
+# 每天（UTC 06:30，北京时间 14:30）检查服务器最近一次推送：周二至周六应当在 10 小时内有心跳
+# （服务器在纽约时间周一至周五 21:15、23:45 运行）。超时则本检查失败，GitHub 会给仓库所有者发邮件；
+# 若在仓库 Secrets 里设置了 NTFY_TOPIC，同时推送到 ntfy。
+name: heartbeat
+on:
+  schedule:
+    - cron: "30 6 * * 2-6"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查心跳
+        id: hb
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          hb = json.load(open("heartbeat.json"))
+          age = (datetime.now(timezone.utc) - datetime.fromisoformat(hb["time"])).total_seconds() / 3600
+          msg = f"最近一次运行 {hb['time']}（{age:.1f} 小时前），数据日 {hb.get('data_day')}"
+          print(msg)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"msg={msg}\n")
+          if age > 10:
+              raise SystemExit("服务器漏跑：超过 10 小时没有心跳")
+          PY
+      - name: 漏跑时推送 ntfy（可选）
+        if: failure()
+        env:
+          TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -n "$TOPIC" ] && curl -s -H "Title: =?UTF-8?B?$(printf '%s' '美股交易系统：服务器漏跑' | base64 -w0)?=" \
+            -d "超过 10 小时没有收到服务器心跳，请检查服务器（systemctl status usr-trade.timer）" "https://ntfy.sh/$TOPIC" || true

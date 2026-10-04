@@ -251,6 +251,17 @@ def render(s: dict[str, Any], holdings: Holdings, source: str) -> str:
             f"- 自 {tr['since']} 起：组合 {tr['portfolio_growth'] - 1:+.2%}，"
             f"模型 {tr['model_growth'] - 1:+.2%}，偏差 {tr['gap']:+.2%}",
         ]
+    st1 = s.get("stage1")
+    if st1 and st1.get("lists"):
+        lines += [
+            "",
+            "## 阶段 1 进度",
+            f"- 清单 {st1['lists']} 份，已复核 {st1['reviewed']} 份"
+            + (f"，待复核：{'、'.join(st1['pending'])}" if st1["pending"] else "")
+            + (f"，被搁置 {len(st1['rejected'])} 份" if st1["rejected"] else ""),
+            f"- 自 {st1['first_list']} 起满 3 个月为 {st1['gate_date']}"
+            + ("，门槛已满足" if st1["met"] else f"，还有 {st1['days_left']} 天"),
+        ]
     lines += ["", "## 需要关注", *([f"- {a}" for a in s["attention"]] or ["- 无"]), ""]
     return "\n".join(lines)
 
@@ -279,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model-start", type=date.fromisoformat, help="sleeve_mix：模型重放起点（与出单一致）"
     )
+    parser.add_argument("--reviews-dir", type=Path, default=Path("portfolio/reviews"))
     args = parser.parse_args(argv)
     pending = not args.holdings.exists()
     args.holdings.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +368,19 @@ def main(argv: list[str] | None = None) -> int:
         data_issues=data_issues,
         **overrides,
     )
+    from us_stock_research.trading.reviews import progress
+
+    study_name = (mix or contract)["name"]
+    months = int((gates.get("stage1") or {}).get("consecutive_months", 3))
+    status["stage1"] = progress(
+        args.orders_dir / study_name,
+        args.reviews_dir / f"{study_name}.jsonl",
+        months,
+        datetime.now(UTC).date(),
+    )
+    if status["stage1"]["rejected"]:
+        n_rej = len(status["stage1"]["rejected"])
+        status["attention"].append(f"有 {n_rej} 份清单因独立复核未通过被搁置")
     source = "Alpaca 模拟盘" if "paper" in str(args.holdings) else "演练账本"
     if pending:
         source += "（首笔订单尚未成交，按全部现金显示）"

@@ -63,4 +63,6 @@ if [ -n "$NOTE" ] || [ ! -f "$FIRST" ]; then
 $(echo "$ST_OUT" | head -n 1)"
   touch "$FIRST"
 fi
+# 运行记录推送到私有仓库（未配置时跳过）；仓库里的定时检查负责漏跑报警
+bash scripts/server_backup.sh 2>&1 | tail -n 1
 echo "== $(date '+%F %T %Z') 完成"

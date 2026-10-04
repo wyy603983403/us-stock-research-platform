@@ -2311,3 +2311,35 @@ def test_verify_intent_independent_replay_matches() -> None:
     bad = dict(it, orders=[dict(o, shares=o["shares"] + 1) for o in it["orders"]])
     assert vi.check(bad, rec, exp)
     assert "结论：一致" in vi.render(rec, it, [])
+
+
+def test_stage1_review_log_and_progress(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    import pytest
+
+    from us_stock_research.trading import reviews as rv
+
+    assert rv.add_months(date(2026, 10, 2), 3) == date(2027, 1, 2)
+    assert rv.add_months(date(2026, 11, 30), 3) == date(2027, 2, 28)
+    folder, log = tmp_path / "orders/mix", tmp_path / "reviews/mix.jsonl"
+    folder.mkdir(parents=True)
+    for d in ("2026-10-02", "2026-10-30"):
+        (folder / f"{d}.json").write_text("{}")
+        (folder / f"{d}.md").write_text("- [ ] 复核人 / 日期：\n")
+    (folder / "2026-10-30.md").write_text("- [ ] 复核人 / 日期：\n**结论：一致**\n")
+    with pytest.raises(ValueError):
+        rv.record(folder, log, date(2026, 10, 2), "用户")  # no independent check yet
+    with pytest.raises(ValueError):
+        rv.record(folder, log, date(2026, 10, 9), "用户")  # no such list
+    rv.record(folder, log, date(2026, 10, 30), "用户", now=datetime(2026, 10, 31))
+    assert "[x] 复核人 / 日期：用户 / 2026-10-31" in (folder / "2026-10-30.md").read_text()
+    p = rv.progress(folder, log, 3, date(2027, 1, 5))
+    assert p["lists"] == 2 and p["reviewed"] == 1 and p["pending"] == ["2026-10-02"]
+    assert p["gate_date"] == "2027-01-02" and not p["met"]
+    (folder / "2026-10-02.md").write_text("**结论：一致**\n")
+    rv.record(folder, log, date(2026, 10, 2), "用户")
+    assert rv.progress(folder, log, 3, date(2027, 1, 5))["met"]
+    assert not rv.progress(folder, log, 3, date(2026, 12, 1))["met"]
+    (folder / "2026-11-02.json.rejected").write_text("{}")
+    assert not rv.progress(folder, log, 3, date(2027, 1, 5))["met"]

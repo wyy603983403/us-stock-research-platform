@@ -123,6 +123,10 @@ const tiles = [
   ['SPY 距 200 日均线', pct(sig.distance_to_sma), `收盘 ${sig.close.toFixed(2)} · 均线 ${sig.sma.toFixed(2)}`],
   ['与研究模型偏差', tr ? pct(tr.gap, 2) : '—', tr ? `自 ${tr.since}` : '首笔成交后开始计算'],
 ];
+const s1 = S.stage1;
+if (s1 && s1.lists) tiles.push(['阶段 1 复核', `${s1.reviewed} / ${s1.lists} 份`,
+  s1.met ? '门槛已满足' : (s1.pending.length ? `待复核 ${s1.pending.join('、')}` :
+  `满 3 个月：${s1.gate_date}（还有 ${s1.days_left} 天）`)]);
 for (const [k, v, n] of tiles) { const t = el('div', {class: 'tile'});
   t.append(el('div', {class: 'k'}, k), el('div', {class: 'v'}, v), el('div', {class: 'n'}, n)); $('tiles').append(t); }
 
