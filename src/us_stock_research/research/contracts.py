@@ -138,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
                 lt = load_lt_contract(path)
                 print(f"OK   {path} ({lt['name']}, {lt.get('status')}, leveraged_trend)")
                 continue
+            if kind == "trend_ensemble":
+                from us_stock_research.research.trend_ensemble import load_te_contract
+
+                te = load_te_contract(path)
+                print(f"OK   {path} ({te['name']}, {te.get('status')}, trend_ensemble)")
+                continue
             if kind == "sleeve_mix":
                 from us_stock_research.research.sleeve_mix import load_mix_contract
 

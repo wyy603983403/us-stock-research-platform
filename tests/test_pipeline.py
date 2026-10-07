@@ -51,6 +51,10 @@ def test_repo_contracts_and_risk_config_are_valid() -> None:
             from us_stock_research.research.leveraged_trend import load_lt_contract
 
             assert load_lt_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
+        elif "kind: trend_ensemble" in text:
+            from us_stock_research.research.trend_ensemble import load_te_contract
+
+            assert load_te_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
         elif "kind: sleeve_mix" in text:
             from us_stock_research.research.sleeve_mix import load_mix_contract
 
@@ -2059,7 +2063,9 @@ def test_alpaca_paper_submission_is_paper_only_idempotent_and_reconciled() -> No
     h = ap.holdings_from_account({"equity": "105000", "cash": "12.5"}, {"SSO": 10.0},
                                  {"peak_nav_usd": 110000.0})  # fmt: skip
     assert h["peak_nav_usd"] == 110000.0 and h["cash_usd"] == 12.5
-    assert ap.load_config(Path("configs/paper_broker.yml"))["enabled"] is False
+    conf = Path("configs/paper_broker.yml")
+    if ap.load_config(conf)["enabled"]:  # only on by a dated user decision
+        assert "用户 2026-10-07 决定提前打开" in conf.read_text()
 
 
 def test_daily_status_tracks_model_and_flags_attention(tmp_path: Path) -> None:
@@ -2482,3 +2488,74 @@ def test_paper_stage2_rehearsal_six_etfs(tmp_path: Path) -> None:
         ap.PaperClient, ap.submission_window_ok, cfg.load_settings = saved[:3]  # type: ignore[assignment]
         os.environ.clear()
         os.environ.update(saved[3])
+
+
+def test_live_manual_ledger(tmp_path: Path) -> None:
+    import pytest
+
+    from us_stock_research.trading import live_ledger as ll
+    from us_stock_research.trading.order_intent import load_holdings
+
+    led, fills = tmp_path / "live/schwab.yml", tmp_path / "live/fills.csv"
+    with pytest.raises(ValueError):
+        ll.init(led, 20_000, date(2026, 10, 30), cap=10_000)  # above the user's cap
+    ll.init(led, 10_000, date(2026, 10, 30), cap=10_000)
+    with pytest.raises(ValueError):
+        ll.init(led, 5_000, date(2026, 10, 30))  # never overwrite
+    out = ll.fill(led, fills, day=date(2026, 11, 2), symbol="SSO", side="BUY", qty=69,
+                  price=72.0, fee=1.0, close=71.8)  # fmt: skip
+    assert abs(out["slippage_bps"] - (72.0 / 71.8 - 1) * 1e4) < 1e-9  # paid above the close
+    assert out["ledger"]["cash_usd"] == round(10_000 - 69 * 72.0 - 1.0, 2)
+    with pytest.raises(ValueError):
+        ll.fill(led, fills, day=date(2026, 11, 2), symbol="SSO", side="SELL", qty=70, price=72.0)
+    ll.fill(led, fills, day=date(2026, 11, 3), symbol="SSO", side="SELL", qty=9, price=73.0,
+            close=73.5)  # fmt: skip
+    ll.adjust_cash(led, 3.21, "BIL dividend")
+    h = load_holdings(led, 0.0)  # the order generator reads it like any ledger
+    assert h.positions == {"SSO": 60.0}
+    assert abs(h.cash_usd - round(10_000 - 69 * 72 - 1 + 9 * 73 + 3.21, 2)) < 1e-9
+    assert len(fills.read_text().strip().splitlines()) == 3  # header + 2 fills
+
+
+def test_trend_ensemble_engine_and_independent_check() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research import leveraged_trend as lt
+    from us_stock_research.research import trend_ensemble as te
+    from us_stock_research.research import verify_ensemble as ve
+
+    days = trading_days(date(1998, 1, 2), date(2004, 12, 31))
+    rng = random.Random(5)
+    prices, p = [], 100.0
+    for _ in days:
+        p *= 1 + rng.gauss(0.0003, 0.013)
+        prices.append(p)
+    yields: list[float | None] = [None] * 3 + [4.0 + rng.random() for _ in days[3:]]
+    rule = {"signals": {"sma_days": [50, 100, 200], "momentum_days": 252}, "vol_target": 0.25,
+            "vol_window_days": 20, "max_leverage": 2.0, "rebalance_band": 0.25,
+            "trading_cost_bps": 10}  # fmt: skip
+    single = te.simulate_targets(days, prices, yields, te.ensemble_targets(
+        prices, yields, sma_days=[200], momentum_days=None, vol_window=20, vol_target=0.25,
+        max_leverage=2.0), band=0.25, cost_bps=10)  # fmt: skip
+    ref = lt.simulate_vol_target(
+        days,
+        prices,
+        yields,
+        sma_days=200,
+        vol_window=20,
+        vol_target=0.25,
+        max_leverage=2.0,
+        band=0.25,
+        cost_bps=10,
+    )
+    assert len(single) == len(ref)
+    assert max(abs(a[1] - b[1]) for a, b in zip(single, ref, strict=True)) < 1e-12
+    rows = te.run_ensemble(rule, days, prices, yields)
+    fracs = {round(r[3] / max(r[3], 1e-9), 6) for r in rows}
+    assert len({round(x, 2) for _, _, _, x in rows}) > 4 and fracs  # graded exposure used
+    c = {"rule": rule, "data": {"start": date(1999, 6, 1), "end": date(2004, 12, 31)}}
+    win = te.window(rows, c["data"]["start"], c["data"]["end"])
+    ind = ve.monthly_returns(c, days, prices, yields)
+    assert set(ind) == set(win["months"])
+    assert max(abs(ind[m] - r) for m, r in zip(win["months"], win["strategy"], strict=True)) < 1e-12

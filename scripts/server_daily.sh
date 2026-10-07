@@ -21,8 +21,9 @@ STUDY=vt_plus_defensive
 CONTRACT=research/vt-plus-defensive/study.yml
 MODEL_START=2026-10-02                      # 模型重放起点 = 本组合首份订单的信号日（不要改）
 LEDGER=portfolio/rehearsal/$STUDY.yml
-.venv/bin/usr-rehearsal-fill --study $STUDY --cost-bps 10 2>&1 | tail -n 2
 PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))")
+# 模拟盘打开后持仓以模拟账户为准，演练账本冻结（不再记账）
+[ "$PAPER_ON" = "True" ] || .venv/bin/usr-rehearsal-fill --study $STUDY --cost-bps 10 2>&1 | tail -n 2
 if [ "$PAPER_ON" = "True" ]; then
   .venv/bin/usr-paper --sync 2>&1 | tail -n 5
   LEDGER=portfolio/paper/$STUDY.yml
@@ -46,6 +47,24 @@ if [ -f "orders/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "order
   esac
 fi
 if [ "$PAPER_ON" = "True" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
+# 实盘（嘉信国际账户，用户在 App 手动下单）：账本存在且信号日不早于 configs/live.yml 的 start_signal_day 时出清单
+LIVE_OUT=""; LIVE_VERIFY=""; LIVE_ST=""
+LIVE_START=$(.venv/bin/python -c "import yaml;print((yaml.safe_load(open('configs/live.yml')) or {}).get('start_signal_day') or '')" 2>/dev/null)
+if [ -f portfolio/live/schwab.yml ] && [ -n "$LIVE_START" ] && [[ ! "$LASTDAY" < "$LIVE_START" ]]; then
+  LIVE_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
+    --breaker 0.40 --holdings portfolio/live/schwab.yml --out-dir orders/live 2>&1 | tail -n 1) || LIVE_OUT="生成失败"
+  echo "实盘：$LIVE_OUT"
+  if [ -f "orders/live/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "orders/live/$STUDY/$LASTDAY.md" 2>/dev/null; then
+    LIVE_VERIFY=$(.venv/bin/usr-verify-intent --intent "orders/live/$STUDY/$LASTDAY.json" --contract $CONTRACT \
+      --holdings portfolio/live/schwab.yml 2>&1 | tail -n 1)
+    echo "实盘$LIVE_VERIFY"
+    case "$LIVE_VERIFY" in 独立复核：一致) ;; *)
+      mv "orders/live/$STUDY/$LASTDAY.json" "orders/live/$STUDY/$LASTDAY.json.rejected";;
+    esac
+  fi
+  LIVE_ST=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings portfolio/live/schwab.yml \
+    --output artifacts/live/status.md --orders-dir orders/live 2>&1 | head -n 1)
+fi
 ST_OUT=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings "$LEDGER" \
   --update-report "artifacts/update_$STAMP.json" 2>&1); ST_RC=$?
 echo "$ST_OUT"
@@ -56,6 +75,13 @@ case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：$LT_OUT";; esac
 }$VERIFY"
 case "$VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 独立复核未通过，该清单已搁置（不记账、不下模拟单）
 $NOTE";; esac
+case "$LIVE_OUT" in ""|*"订单 0 笔"*) ;; *)
+  NOTE="${NOTE:+$NOTE
+}【实盘·嘉信手动】$LIVE_OUT（以最新清单为准，之前未执行的清单作废；成交后用 scripts/live.sh fill 记录）";; esac
+case "$LIVE_VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 实盘清单独立复核未通过，已搁置，请勿下单
+$NOTE";; esac
+[ -n "$LIVE_ST" ] && NOTE="${NOTE:+$NOTE
+}实盘账户：$LIVE_ST"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE
 }$(echo "$ST_OUT" | grep '需要关注')"
 # 每个交易日都发一条简报（只发一次：第二次运行仅在有异常时发）

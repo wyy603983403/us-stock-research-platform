@@ -1,6 +1,7 @@
 # 路线图阶段 2（模拟盘）：用户 2026-10-03 决定先用 Alpaca 模拟账户（paper-api.alpaca.markets，代码中写死，无实盘路径）。
 # 实盘券商未定（盈透账户审核中）。密钥放 .env：ALPACA_PAPER_KEY_ID / ALPACA_PAPER_SECRET_KEY（模拟账户自己的密钥）。
-# enabled 只能由用户在阶段 1（连续 3 个月订单与手工复核一致）通过后改为 true。
-enabled: false
+# enabled 只能由用户决定。原定阶段 1（连续 3 个月复核）通过后再开；
+# 用户 2026-10-07 决定提前打开，与订单演练、小额实盘并行（见 configs/stage_gates.yml）。
+enabled: true
 study: vt_plus_defensive
 holdings: portfolio/paper/vt_plus_defensive.yml

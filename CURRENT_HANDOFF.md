@@ -74,3 +74,6 @@
 35. 阶段 2 准备：alpaca_paper 记录已发送的信号日，清单被搁置时不回退重发旧清单；6 只 ETF 多日模拟测试（同步→发单→收盘成交→对账→不重发→不一致即停）。
 36. 2026-10-07：用户嘉信国际账户已开户（未入金、未接入）。待确认：App 内 SSO/BIL/TLT/IEF/GLD/SPY 能否下单、developer.schwab.com 个人开发者 API 能否申请、W-8BEN 股息预扣税率。
     阶段 1 复核：2026-10-02 清单已复核（1/1），满 3 个月为 2027-01-02。运行记录仓库 us-stock-ops 推送与 heartbeat 工作流已验证。
+37. 2026-10-07 用户决定压缩时间表：paper_broker.yml enabled=true（模拟盘即日开，演练账本冻结）；小额实盘手动执行从 10-30 起（configs/live.yml，≤$10,000，
+    usr-live / scripts/live.sh，服务器出 orders/live/ 清单 + 独立复核 + 通知）。AGENTS.md 记录：代理不下单、不持有券商凭证、不提高上限。
+38. 预先登记 sp500_trend_ensemble（d7d160d）：4 信号投票替代单一 200 日开关；引擎 usr-trend-ensemble + verify_ensemble。
