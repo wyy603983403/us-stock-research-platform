@@ -77,3 +77,4 @@
 37. 2026-10-07 用户决定压缩时间表：paper_broker.yml enabled=true（模拟盘即日开，演练账本冻结）；小额实盘手动执行从 10-30 起（configs/live.yml，≤$10,000，
     usr-live / scripts/live.sh，服务器出 orders/live/ 清单 + 独立复核 + 通知）。AGENTS.md 记录：代理不下单、不持有券商凭证、不提高上限。
 38. 预先登记 sp500_trend_ensemble（d7d160d）：4 信号投票替代单一 200 日开关；引擎 usr-trend-ensemble + verify_ensemble。
+39. sp500_trend_ensemble 未通过（夏普差 −0.03）；试验登记 12 组。运行中的策略不变。
