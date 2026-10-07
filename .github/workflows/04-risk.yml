@@ -1,9 +1,9 @@
 name: 04 Risk gate
 on:
   pull_request:
-    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md"]
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml"]
   push:
-    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md"]
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml"]
   workflow_dispatch:
 permissions:
   contents: read
