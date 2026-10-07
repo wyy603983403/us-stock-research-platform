@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from us_stock_research.bars import DailyBar, merge_bars
+from us_stock_research.collectors.alpaca_daily import CROSSCHECK_TOLERANCE, crosscheck, fetch_daily
 from us_stock_research.collectors.yahoo_daily import USER_AGENT, fetch_symbol
 from us_stock_research.config import load_settings
 from us_stock_research.quality.intraday import last_closed_session
@@ -36,6 +37,7 @@ from us_stock_research.storage import BarStore, open_store
 OVERLAP_DAYS = 10
 RESTATEMENT_TOLERANCE = 1e-6
 FetchFn = Callable[[str, date, date], tuple[list[DailyBar], dict[date, float]]]
+AltFn = Callable[[str, date, date], list[DailyBar]]  # backup source: raw daily bars
 
 
 def plan(existing: list[DailyBar], tail: list[DailyBar]) -> tuple[str, str]:
@@ -85,6 +87,43 @@ def update_symbol(
     }
 
 
+def _use_alt(
+    symbol: str,
+    store: BarStore,
+    alt: AltFn,
+    today: date,
+    execute: bool,
+    failed: dict[str, str],
+    results: list[dict[str, Any]],
+    fallback: dict[str, int],
+    checks: dict[str, dict[str, float]],
+    alt_errors: dict[str, str],
+) -> None:
+    """Backup source: fill the days Yahoo did not deliver, or cross-check its latest close."""
+    existing = store.read_bars(symbol)
+    if not existing:
+        return
+    last = existing[-1]
+    try:
+        if symbol in failed:
+            new = [b for b in alt(symbol, last.day + timedelta(days=1), today) if b.day > last.day]
+            if new and execute:
+                store.write_bars(symbol, existing + new)
+            fallback[symbol] = len(new)
+            if new and new[-1].day == today:
+                del failed[symbol]  # reported under "fallback" instead
+            if new:
+                results.append({"symbol": symbol, "action": "append_backup", "reason": "alpaca",
+                                "new_days": len(new), "last": new[-1].day.isoformat()})  # fmt: skip
+        elif last.day == today:
+            rows = [b for b in alt(symbol, today, today) if b.day == today]
+            if rows:
+                checks[symbol] = {"yahoo": last.close, "alpaca": rows[0].close,
+                                  "diff": crosscheck(last.close, rows[0].close)}  # fmt: skip
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        alt_errors[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+
+
 def _transient(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
@@ -106,6 +145,7 @@ def run_update(
     retries: int = 3,
     backoff: float = 30.0,
     retry_budget: float = 600.0,
+    alt: AltFn | None = None,
 ) -> dict[str, Any]:
     """``retries``: extra attempts after HTTP 429 / 5xx / network errors, waiting backoff × 3^n;
     total waiting per run is capped by ``retry_budget`` seconds (a blocked source must not stall
@@ -113,6 +153,9 @@ def run_update(
     results: list[dict[str, Any]] = []
     failed: dict[str, str] = {}
     retried: dict[str, int] = {}
+    fallback: dict[str, int] = {}
+    checks: dict[str, dict[str, float]] = {}
+    alt_errors: dict[str, str] = {}
     waited = 0.0
     for symbol in symbols:
         attempt = 0
@@ -132,6 +175,9 @@ def run_update(
                     continue
                 failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
                 break
+        if alt is not None:
+            _use_alt(symbol, store, alt, today, execute, failed, results, fallback, checks,
+                     alt_errors)  # fmt: skip
         sleep(pause)
     accepted, quarantine = load_exceptions(exceptions) if exceptions else ({}, {})
     audited = {
@@ -149,6 +195,12 @@ def run_update(
         "quality_errors": {s: a.errors[:3] for s, a in audited.items() if a.errors},
         "failed": failed,
         "retried": retried,
+        "fallback": fallback,
+        "crosscheck": checks,
+        "crosscheck_mismatch": sorted(
+            s for s, c in checks.items() if abs(c["diff"]) > CROSSCHECK_TOLERANCE
+        ),
+        "backup_errors": alt_errors,
         "retry_wait_seconds": waited,
         # the source did not deliver the latest session (throttling, stale cache, halted stock)
         "behind": sorted(r["symbol"] for r in results if r["last"] < today.isoformat()),
@@ -163,6 +215,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pause", type=float, default=0.5)
     parser.add_argument("--retries", type=int, default=3, help="extra attempts on 429/5xx")
     parser.add_argument("--retry-budget", type=float, default=600.0, help="max seconds of waiting")
+    parser.add_argument(
+        "--alpaca-backup",
+        action="store_true",
+        help="Alpaca daily bars as backup + cross-check (needs ALPACA_KEY_ID/ALPACA_SECRET_KEY)",
+    )
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
     parser.add_argument("--report", type=Path, help="write the JSON summary here too")
     parser.add_argument("--exceptions", type=Path, default=Path("configs/quality_exceptions.yml"))
@@ -186,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             exceptions=args.exceptions,
             retries=args.retries,
             retry_budget=args.retry_budget,
+            alt=_alpaca_alt(settings) if args.alpaca_backup else None,
         )
     summary = {"dry_run": not args.execute, "date": today.isoformat(), **summary}
     text = json.dumps(summary, indent=2, ensure_ascii=False)
@@ -198,3 +256,19 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _alpaca_alt(settings: Any) -> AltFn | None:
+    import os
+
+    key, secret = os.environ.get("ALPACA_KEY_ID"), os.environ.get("ALPACA_SECRET_KEY")
+    if not key or not secret:
+        key, secret = (
+            os.environ.get("ALPACA_PAPER_KEY_ID"),
+            os.environ.get("ALPACA_PAPER_SECRET_KEY"),
+        )
+    if not key or not secret:
+        print("备用数据源未启用：.env 里没有 Alpaca 密钥", file=sys.stderr)
+        return None
+    client = httpx.Client(timeout=settings.http_timeout_seconds)
+    return lambda s, a, b: fetch_daily(client, s, a, b, key, secret)

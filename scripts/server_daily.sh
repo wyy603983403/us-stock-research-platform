@@ -8,11 +8,13 @@ STAMP="$(date +%Y%m%d)"
 LOG=logs/daily_$STAMP.log
 exec > >(tee -a "$LOG") 2>&1
 echo "== $(date '+%F %T %Z') 开始"
-.venv/bin/usr-update SPY SSO BIL TLT IEF GLD --execute --report "artifacts/update_$STAMP.json" >/dev/null || true
+.venv/bin/usr-update SPY SSO BIL TLT IEF GLD --alpaca-backup --execute --report "artifacts/update_$STAMP.json" >/dev/null || true
 .venv/bin/python - <<PY
 import json
 r = json.load(open("artifacts/update_$STAMP.json"))
-print(f"数据 {r['date']}：失败 {len(r['failed'])}，未拿到最新 {len(r.get('behind', []))}，质量错误 {len(r['quality_errors'])}")
+print(f"数据 {r['date']}：失败 {len(r['failed'])}，未拿到最新 {len(r.get('behind', []))}，质量错误 {len(r['quality_errors'])}"
+      f"，备用源补齐 {sum(1 for n in r.get('fallback', {}).values() if n)}，核对 {len(r.get('crosscheck', {}))} 只"
+      f"（不一致 {len(r.get('crosscheck_mismatch', []))}）")
 PY
 .venv/bin/usr-collect-macro --execute >/dev/null 2>&1 || echo "FRED 部分失败"
 STUDY=vt_plus_defensive

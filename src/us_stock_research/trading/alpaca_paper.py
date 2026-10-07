@@ -121,6 +121,7 @@ def holdings_from_account(
         "peak_nav_usd": round(peak, 2),
         "equity_usd": round(equity, 2),
         "expected_after_fills": (previous or {}).get("expected_after_fills"),
+        "submitted_signal_days": list((previous or {}).get("submitted_signal_days") or []),
     }
 
 
@@ -202,12 +203,19 @@ def main(argv: list[str] | None = None) -> int:
         print("没有订单清单")
         return 0
     intent = json.loads(files[-1].read_text())
+    if intent["signal_day"] in holdings["submitted_signal_days"]:
+        # e.g. today's list was set aside by the independent check: never fall back to an older one
+        print(f"最新订单清单 {files[-1].name} 已经发送过，未重复发送")
+        return 0
     stale = date.fromisoformat(intent["signal_day"]) < date.today() - timedelta(days=4)
     if stale or not intent["orders"]:
         print(f"最新订单清单 {files[-1].name} 已过期或为空，未发送")
         return 0
     sent, expected = submit(client, intent, holdings, now_utc=datetime.now(UTC))
     holdings["expected_after_fills"] = expected
+    holdings["submitted_signal_days"] = sorted(
+        set(holdings["submitted_signal_days"]) | {intent["signal_day"]}
+    )[-60:]
     path.write_text(yaml.safe_dump(holdings, allow_unicode=True, sort_keys=False))
     entry = {"created_at": datetime.now(UTC).isoformat(timespec="seconds"),
              "type": "paper_submit", "study": study, "signal_day": intent["signal_day"],

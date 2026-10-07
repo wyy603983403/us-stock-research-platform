@@ -2360,3 +2360,125 @@ def test_replica_index_trades_next_close_like_live() -> None:
     assert idx[d[0]] == 1.0 and idx[d[1]] == 1.0  # signal day, then the fill at 10-05's close
     assert abs(idx[d[2]] - (0.5 * 73.44 / 72 + 0.5)) < 1e-12  # first day invested
     assert abs(idx[d[3]] - (0.5 * 72 / 72 + 0.5)) < 1e-12  # holdings drift, no rebalance
+
+
+def test_update_alpaca_backup_and_crosscheck(tmp_path: Path) -> None:
+    import httpx
+    from conftest import synthetic_bars
+
+    from us_stock_research.collectors.alpaca_daily import parse_daily
+    from us_stock_research.collectors.update import run_update
+    from us_stock_research.storage import CsvStore
+
+    rows = [{"t": "2026-10-02T04:00:00Z", "o": 1, "h": 2, "l": 0.5, "c": 1.5, "v": 9}]
+    assert parse_daily(rows)[0].day == date(2026, 10, 2) and parse_daily(rows)[0].adj_close == 1.5
+    bars = synthetic_bars(date(2026, 9, 1), 23, 0.001, 0.01, 0.0)  # ends on 2026-10-01
+    today = date(2026, 10, 2)
+    store = CsvStore(tmp_path)
+    for sym in ("DOWN", "OK"):
+        store.write_bars(sym, bars)
+        store.write_dividends(sym, {})
+    req = httpx.Request("GET", "https://example.test")
+    extra = DailyBar(today, 10, 11, 9, 10.5, 10.5, 5)
+
+    def fetch(symbol: str, a: date, b: date):  # type: ignore[no-untyped-def]
+        if symbol == "DOWN":
+            raise httpx.HTTPStatusError("x", request=req, response=httpx.Response(500, request=req))
+        return [x for x in bars if x.day >= a] + [extra], {}
+
+    def alt(symbol: str, a: date, b: date) -> list[DailyBar]:
+        close = 10.5 if symbol == "DOWN" else 10.6  # OK: 0.95% above Yahoo -> mismatch
+        return [DailyBar(today, 10, 11, 9, close, close, 7)]
+
+    out = run_update(["DOWN", "OK"], store, fetch, today, date(2000, 1, 1), execute=True,
+                     pause=0.0, sleep=lambda _: None, retries=1, backoff=1.0, alt=alt)  # fmt: skip
+    assert out["failed"] == {} and out["fallback"] == {"DOWN": 1} and out["behind"] == []
+    assert store.read_bars("DOWN")[-1].day == today and store.read_bars("DOWN")[-1].close == 10.5
+    assert out["crosscheck_mismatch"] == ["OK"]
+    assert abs(out["crosscheck"]["OK"]["diff"] - (10.6 / 10.5 - 1)) < 1e-12
+
+
+def test_paper_stage2_rehearsal_six_etfs(tmp_path: Path) -> None:
+    import json as js
+    import os
+
+    import httpx
+    import yaml
+
+    import us_stock_research.config as cfg
+    from us_stock_research.trading import alpaca_paper as ap
+
+    broker = {"cash": 100_000.0, "positions": {}, "orders": {}}  # type: ignore[var-annotated]
+    price = {"SSO": 72.0, "BIL": 91.4, "TLT": 77.3, "IEF": 89.1, "GLD": 382.0, "SPY": 779.0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "paper-api.alpaca.markets"
+        p = request.url.path
+        if p == "/v2/account":
+            eq = broker["cash"] + sum(q * price[s] for s, q in broker["positions"].items())
+            return httpx.Response(200, json={"equity": str(eq), "cash": str(broker["cash"])})
+        if p == "/v2/positions":
+            return httpx.Response(
+                200,
+                json=[{"symbol": s, "qty": str(q)} for s, q in broker["positions"].items() if q],
+            )
+        if p == "/v2/orders:by_client_order_id":
+            o = broker["orders"].get(request.url.params["client_order_id"])
+            return httpx.Response(200, json=o) if o else httpx.Response(404)
+        if p == "/v2/orders" and request.method == "POST":
+            b = js.loads(request.content)
+            broker["orders"][b["client_order_id"]] = dict(b, status="accepted")
+            return httpx.Response(200, json={"status": "accepted"})
+        raise AssertionError(p)  # fmt: skip
+
+    def close_auction() -> None:  # every accepted MOC order fills at the close
+        for o in broker["orders"].values():
+            if o["status"] == "accepted":
+                q = int(o["qty"]) * (1 if o["side"] == "buy" else -1)
+                broker["positions"][o["symbol"]] = broker["positions"].get(o["symbol"], 0) + q
+                broker["cash"] -= q * price[o["symbol"]]
+                o["status"] = "filled"
+
+    conf = tmp_path / "paper.yml"
+    hold = tmp_path / "portfolio/paper/mix.yml"
+    conf.write_text(yaml.safe_dump({"enabled": True, "study": "mix", "holdings": str(hold)}))
+    orders = tmp_path / "orders/mix"
+    orders.mkdir(parents=True)
+    day1 = (date.today() - __import__("datetime").timedelta(days=1)).isoformat()
+    day2 = date.today().isoformat()
+    intent = {
+        "study": "mix",
+        "signal_day": day1,
+        "mode": "live-candidate",
+        "trading_enabled": False,
+        "orders": [
+            {"side": "BUY", "symbol": s, "shares": n}
+            for s, n in (("SSO", 347), ("BIL", 182), ("TLT", 215), ("IEF", 187), ("GLD", 43))
+        ],
+    }
+    (orders / f"{day1}.json").write_text(js.dumps(intent))  # fmt: skip
+    saved = (ap.PaperClient, ap.submission_window_ok, cfg.load_settings, dict(os.environ))
+    ap.PaperClient = lambda k, s: saved[0](k, s, transport=httpx.MockTransport(handler))  # type: ignore[assignment,misc]
+    ap.submission_window_ok = lambda now: True  # type: ignore[assignment]
+    cfg.load_settings = lambda: None  # type: ignore[assignment]
+    os.environ.update(ALPACA_PAPER_KEY_ID="k", ALPACA_PAPER_SECRET_KEY="s")
+    run = ["--config", str(conf), "--orders-dir", str(tmp_path / "orders")]
+    try:
+        assert ap.main(["--sync", *run]) == 0
+        assert ap.main(["--submit", *run]) == 0
+        assert len(broker["orders"]) == 5
+        close_auction()
+        assert ap.main(["--sync", *run]) == 0  # positions match what was sent: no break
+        h = yaml.safe_load(hold.read_text())
+        assert h["positions"]["GLD"] == 43 and day1 in h["submitted_signal_days"]
+        assert ap.main(["--submit", *run]) == 0 and len(broker["orders"]) == 5  # not resent
+        (orders / f"{day2}.json.rejected").write_text("{}")  # today's list set aside
+        assert ap.main(["--submit", *run]) == 0 and len(broker["orders"]) == 5
+        broker["positions"]["TLT"] -= 10  # broker differs from expectation -> stop
+        assert ap.main(["--sync", *run]) == 1
+        (orders / f"{day2}.json").write_text(js.dumps(dict(intent, signal_day=day2)))
+        assert ap.main(["--submit", *run]) == 1 and len(broker["orders"]) == 5
+    finally:
+        ap.PaperClient, ap.submission_window_ok, cfg.load_settings = saved[:3]  # type: ignore[assignment]
+        os.environ.clear()
+        os.environ.update(saved[3])

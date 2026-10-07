@@ -69,3 +69,6 @@
     服务器流水线、paper_broker.yml、Mac 脚本已切换；服务器 orders/sp500_trend_voltarget/2026-10-02 作废（不再记账）。
 32. 每份新订单清单由 `usr-verify-intent`（独立第二实现）自动复核，核对表写进清单 .md、结果进通知；不一致则清单改名 .json.rejected 搁置。
 33. 运行记录备份（scripts/server_backup.sh → 私有仓库 OPS_REPO）、漏跑报警（ops/heartbeat.yml，GitHub Actions）、阶段 1 复核记录（usr-review / scripts/review.sh，状态页显示进度）。
+34. 备用数据源：`usr-update --alpaca-backup`（服务器流水线已开）：雅虎失败时用 Alpaca 日线补当日（adj=close，雅虎恢复后自动整段校正），
+    雅虎成功时核对收盘价（>0.5% 报警）。2026-10-07 实测 Alpaca 6 只 ETF 10-01~10-06 收盘与雅虎一致。
+35. 阶段 2 准备：alpaca_paper 记录已发送的信号日，清单被搁置时不回退重发旧清单；6 只 ETF 多日模拟测试（同步→发单→收盘成交→对账→不重发→不一致即停）。

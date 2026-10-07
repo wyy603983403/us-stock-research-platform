@@ -319,9 +319,20 @@ def main(argv: list[str] | None = None) -> int:
         if sb[-1].day != day:
             data_issues.append(f"{s} 数据截至 {sb[-1].day}，SPY 为 {day}")
     if args.update_report and args.update_report.exists():
-        behind = json.loads(args.update_report.read_text()).get("behind") or []
+        report = json.loads(args.update_report.read_text())
+        behind = report.get("behind") or []
         if behind:
             data_issues.append(f"{len(behind)} 只标的未拿到最新交易日数据")
+        used = [s for s, n in (report.get("fallback") or {}).items() if n]
+        if used:
+            data_issues.append(
+                f"雅虎失败，{'、'.join(used)} 当日数据来自 Alpaca 备用源（下次雅虎恢复后自动校正）"
+            )
+        for s in report.get("crosscheck_mismatch") or []:
+            c = report["crosscheck"][s]
+            data_issues.append(
+                f"{s} 收盘价两个数据源不一致：雅虎 {c['yahoo']:.2f}，Alpaca {c['alpaca']:.2f}"
+            )
     nav = holdings.cash_usd + sum(n * prices[s] for s, n in holdings.positions.items())
     history = append_nav(
         args.holdings.with_suffix(".nav.csv"),
