@@ -131,6 +131,38 @@ def model_path(
     return rows
 
 
+def replica_index(
+    path: list[dict[str, Any]], adj: dict[str, dict[date, float]], drift_limit: float = DRIFT_LIMIT
+) -> dict[date, float]:
+    """Value of a frictionless copy of the live portfolio, for tracking.
+
+    Same timing as the live system: target weights decided at a day's close are traded at the next
+    day's close (fractional units, no cost), and only on days the live system would trade (a model
+    event or drift beyond ``drift_limit``). Before the first fill the copy is all cash at 1.0.
+    """
+    out: dict[date, float] = {}
+    units: dict[str, float] = {}
+    value = 1.0
+    pending: dict[str, float] | None = None
+    for row in path:
+        d = row["day"]
+        if units:
+            value = sum(n * adj[s][d] for s, n in units.items())
+        if pending is not None:  # yesterday's list fills at today's close
+            units = {s: w * value / adj[s][d] for s, w in pending.items()}
+            pending = None
+        out[d] = value
+        weights = row["weights"]
+        current = {s: n * adj[s][d] / value for s, n in units.items()} if units else {}
+        drift = max(
+            (abs(weights.get(s, 0.0) - current.get(s, 0.0)) for s in set(weights) | set(current)),
+            default=0.0,
+        )
+        if row["events"] or drift > drift_limit:
+            pending = dict(weights)
+    return out
+
+
 def holding_weights(holdings: Holdings, prices: dict[str, float]) -> dict[str, float]:
     value = {s: n * prices.get(s, 0.0) for s, n in holdings.positions.items()}
     nav = holdings.cash_usd + sum(value.values())

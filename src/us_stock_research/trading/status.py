@@ -341,7 +341,10 @@ def main(argv: list[str] | None = None) -> int:
         adj = {x: {b.day: b.adj_close for b in store.read_bars(x) if b.adj_close > 0} for x in syms}
         common = sorted(set.intersection(*(set(v) for v in adj.values())))
         path = model_path(adj, common, args.model_start, contract["rule"], mix["rule"], slots)
-        model_index = {r["day"]: r["value"] for r in path}
+        from us_stock_research.trading.mix_intent import replica_index
+
+        # 与实盘同样的节奏（信号次日收盘成交、无事件不调仓），只是不取整、不计成本
+        model_index = replica_index(path, adj)
         last = path[-1]
         w = last["weights"]
         overrides = {

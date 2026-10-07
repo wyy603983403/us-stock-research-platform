@@ -2343,3 +2343,20 @@ def test_stage1_review_log_and_progress(tmp_path: Path) -> None:
     assert not rv.progress(folder, log, 3, date(2026, 12, 1))["met"]
     (folder / "2026-11-02.json.rejected").write_text("{}")
     assert not rv.progress(folder, log, 3, date(2027, 1, 5))["met"]
+
+
+def test_replica_index_trades_next_close_like_live() -> None:
+    from us_stock_research.trading import mix_intent as mi
+
+    d = [date(2026, 10, 2), date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)]
+    adj = {"SSO": dict(zip(d, [70.0, 72.0, 73.44, 72.0], strict=True)),
+           "BIL": dict(zip(d, [91.0, 91.0, 91.0, 91.0], strict=True))}  # fmt: skip
+    w = {"SSO": 0.5, "BIL": 0.5}
+    path = [{"day": d[0], "weights": w, "events": ["start"]},
+            {"day": d[1], "weights": w, "events": []},
+            {"day": d[2], "weights": w, "events": []},
+            {"day": d[3], "weights": w, "events": []}]  # fmt: skip
+    idx = mi.replica_index(path, adj)
+    assert idx[d[0]] == 1.0 and idx[d[1]] == 1.0  # signal day, then the fill at 10-05's close
+    assert abs(idx[d[2]] - (0.5 * 73.44 / 72 + 0.5)) < 1e-12  # first day invested
+    assert abs(idx[d[3]] - (0.5 * 72 / 72 + 0.5)) < 1e-12  # holdings drift, no rebalance
