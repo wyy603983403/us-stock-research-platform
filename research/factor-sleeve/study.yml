@@ -7,7 +7,7 @@
 schema_version: 1
 kind: factor_sleeve
 name: factor_sleeve_mix
-status: registered
+status: registered            # 已运行，未通过主检验（2026-10-07，见 docs/results/factor-sleeve-mix.md）
 registered_at: 2026-10-07
 question: >
   把已批准的 vt_plus_defensive（50% 标普趋势 + 波动率目标、50% 防守趋势）改为 40% / 40% / 20%，

@@ -81,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--execute", action="store_true", help="write data (default: dry run)")
+    parser.add_argument(
+        "--local-dir", type=Path, help="read the zips already downloaded here (only those present)"
+    )
     args = parser.parse_args(argv)
     store = TableStore.from_settings(load_settings())
     done: dict[str, Any] = {}
@@ -88,9 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     with httpx.Client(timeout=60, follow_redirects=True) as client:
         for name, filename in DATASETS.items():
             try:
-                response = client.get(BASE + filename)
-                response.raise_for_status()
-                header, days, values = parse_french_csv(read_zip(response.content))
+                if args.local_dir:
+                    if not (args.local_dir / filename).exists():
+                        continue
+                    content = (args.local_dir / filename).read_bytes()
+                else:
+                    response = client.get(BASE + filename)
+                    response.raise_for_status()
+                    content = response.content
+                header, days, values = parse_french_csv(read_zip(content))
             except (httpx.HTTPError, ValueError, zipfile.BadZipFile) as exc:
                 failed[name] = f"{type(exc).__name__}: {exc}"[:200]
                 continue

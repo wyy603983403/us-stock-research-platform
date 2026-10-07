@@ -78,3 +78,7 @@
     usr-live / scripts/live.sh，服务器出 orders/live/ 清单 + 独立复核 + 通知）。AGENTS.md 记录：代理不下单、不持有券商凭证、不提高上限。
 38. 预先登记 sp500_trend_ensemble（d7d160d）：4 信号投票替代单一 200 日开关；引擎 usr-trend-ensemble + verify_ensemble。
 39. sp500_trend_ensemble 未通过（夏普差 −0.03）；试验登记 12 组。运行中的策略不变。
+40. 用户 2026-10-07 问个股方向；此前 4 项时点成分股选股研究均未通过。用户仍选择登记 factor_sleeve_mix（97c74f7）：
+    40/40/20，第三部分 = French BIG HiPRIOR + BIG HiOP 各半，扣 0.5%/年，实施用 MTUM/QUAL。usr-collect-factors 新增两份
+    日度 2×3 组合与 --local-dir（Mac 网络慢时用沙盒下载的 zip）。
+41. factor_sleeve_mix 未通过（夏普差 +0.06，区间 −0.06 至 +0.16）；其余标准均满足；试验登记 13 组。运行中的策略不变。
