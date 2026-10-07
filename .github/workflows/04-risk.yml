@@ -1,17 +1,26 @@
 name: 04 Risk gate
 on:
   pull_request:
-    paths: ["src/us_stock_research/risk.py", "configs/risk/**", "research/**"]
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md"]
+  push:
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md"]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   risk:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.11"}
-      - run: pip install -e '.[dev]'
-      - run: "grep -Eq '^trading_enabled: false$' configs/risk/default.yml"
-      - run: pytest tests/test_pipeline.py -k "risk or contract"
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e '.[dev]'
+      - name: automated live trading stays off
+        run: "grep -Eq '^trading_enabled: false$' configs/risk/default.yml"
+      - name: manual live capital cap stays at the user's first-batch limit
+        run: "grep -Eq '^max_capital_usd: 10000( |$)' configs/live.yml"
+      - run: python -m pytest -q tests/test_pipeline.py -k "risk or contract or paper or live"
