@@ -2574,3 +2574,41 @@ def test_trend_ensemble_engine_and_independent_check() -> None:
     ind = ve.monthly_returns(c, days, prices, yields)
     assert set(ind) == set(win["months"])
     assert max(abs(ind[m] - r) for m, r in zip(win["months"], win["strategy"], strict=True)) < 1e-12
+
+
+def test_factor_sleeve_mix_matches_independent_and_two_sleeve_case() -> None:
+    import random
+    from datetime import timedelta
+
+    from us_stock_research.research import factor_sleeve as fs
+    from us_stock_research.research import sleeve_mix as sm
+    from us_stock_research.research import verify_factor_sleeve as vfs
+
+    rng = random.Random(7)
+    days = [date(2004, 1, 1) + timedelta(days=i) for i in range(900)]
+    days = [d for d in days if d.weekday() < 5]
+    inputs = {}
+    for s in ("TLT", "GLD"):
+        p = [100.0]
+        for _ in days[1:]:
+            p.append(p[-1] * (1 + rng.gauss(0.0003, 0.01)))
+        inputs[s] = (days, p, [4.0] * len(days))
+    ports = {n: [(d, rng.gauss(0.0004, 0.012)) for d in days] for n in ("big_hiop", "big_hiprior")}
+    start, end = date(2005, 1, 1), date(2006, 6, 30)
+    defensive = sm.defensive_monthly(sm.defensive_series(inputs, 60, 10), start, end)
+    vt = {m: rng.gauss(0.01, 0.04) for m in defensive}
+    factor = fs.sleeve_monthly(fs.daily_factor_sleeve(ports, 0.005), sorted(ports), start, end)
+    w = {"aggressive": 0.4, "defensive": 0.4, "factor": 0.2}
+    mix = fs.combine_many({"aggressive": vt, "defensive": defensive, "factor": factor}, w, 10)
+    ind = vfs.mix_monthly(vt_monthly=vt, inputs=inputs, sma=60, bps=10, portfolios=ports,
+                          drag=0.005, weights=w, start=start, end=end)  # fmt: skip
+    assert set(ind) == set(mix) and len(mix) == 18
+    assert max(abs(ind[m] - mix[m]) for m in mix) < 1e-14
+    two = fs.combine_many({"a": vt, "d": defensive}, {"a": 0.5, "d": 0.5}, 10)
+    ref = sm.combine(vt, defensive, 0.5, 10)
+    assert max(abs(two[m] - ref[m]) for m in ref) < 1e-15
+    # the drag costs about 0.5% a year
+    gross = fs.sleeve_monthly(ports, sorted(ports), start, end)
+    yearly = [(1 + gross[m]) / (1 + factor[m]) - 1 for m in gross]
+    assert 0.004 < sum(yearly) / len(yearly) * 12 < 0.006
+    assert fs.full_months(date(2013, 7, 18), date(2005, 1, 1), end)[0] == date(2013, 8, 1)
