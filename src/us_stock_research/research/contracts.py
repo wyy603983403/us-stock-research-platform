@@ -150,6 +150,12 @@ def main(argv: list[str] | None = None) -> int:
                 mix = load_mix_contract(path)
                 print(f"OK   {path} ({mix['name']}, {mix.get('status')}, sleeve_mix)")
                 continue
+            if kind == "factor_sleeve":
+                from us_stock_research.research.factor_sleeve import load_fs_contract
+
+                fs = load_fs_contract(path)
+                print(f"OK   {path} ({fs['name']}, {fs.get('status')}, factor_sleeve)")
+                continue
             if kind == "cross_section":
                 from us_stock_research.research.cross_section import load_xs_contract
 

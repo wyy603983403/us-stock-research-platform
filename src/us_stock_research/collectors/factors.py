@@ -28,12 +28,15 @@ DATASETS = {
     "mom_daily": "F-F_Momentum_Factor_daily_CSV.zip",
     "ff5_monthly": "F-F_Research_Data_5_Factors_2x3_CSV.zip",
     "mom_monthly": "F-F_Momentum_Factor_CSV.zip",
+    # research/factor-sleeve: value-weighted size x momentum and size x profitability portfolios
+    "me_prior_daily": "6_Portfolios_ME_Prior_12_2_Daily_CSV.zip",
+    "me_op_daily": "6_Portfolios_ME_OP_2x3_daily_CSV.zip",
 }
 KIND = "factors"
 
 
 def _column(name: str) -> str:
-    return name.strip().lower().replace("-", "_") or "unnamed"
+    return "_".join(name.strip().lower().replace("-", "_").split()) or "unnamed"
 
 
 def parse_french_csv(text: str) -> tuple[list[str], list[date], list[list[float]]]:

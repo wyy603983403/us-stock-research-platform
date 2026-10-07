@@ -59,6 +59,10 @@ def test_repo_contracts_and_risk_config_are_valid() -> None:
             from us_stock_research.research.sleeve_mix import load_mix_contract
 
             assert load_mix_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
+        elif "kind: factor_sleeve" in text:
+            from us_stock_research.research.factor_sleeve import load_fs_contract
+
+            assert load_fs_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
         elif "kind: cross_section" not in text:  # validated by the xs engine test
             load_contract(path)
     risk = load_risk(ROOT / "configs/risk/default.yml")
@@ -839,6 +843,17 @@ def test_parse_french_factor_files() -> None:
     header, days, values = parse_french_csv(monthly)
     assert header == ["mom"] and days == [date(1927, 1, 1), date(1927, 2, 1)]
     assert values[0][0] == pytest.approx(0.0057) and values[1][0] != values[1][0]  # NaN
+    six = (
+        "  Average Value Weighted Returns -- Daily\n"
+        ",SMALL LoPRIOR,ME1 PRIOR2,SMALL HiPRIOR,BIG LoPRIOR,ME2 PRIOR2,BIG HiPRIOR\n"
+        "19260105,   0.10,  0.20,  0.30,  0.40,  0.50,  0.60\n\n"
+        "  Average Equal Weighted Returns -- Daily\n"
+        ",SMALL LoPRIOR,ME1 PRIOR2,SMALL HiPRIOR,BIG LoPRIOR,ME2 PRIOR2,BIG HiPRIOR\n"
+        "19260105,   9.00,  9.00,  9.00,  9.00,  9.00,  9.00\n"
+    )
+    header, days, values = parse_french_csv(six)  # value-weighted table only
+    assert header[-1] == "big_hiprior" and header[1] == "me1_prior2"
+    assert values == [[pytest.approx(x / 100) for x in (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)]]
 
 
 def test_sp500_membership_intervals() -> None:
