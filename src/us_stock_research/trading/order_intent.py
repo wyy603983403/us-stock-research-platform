@@ -221,6 +221,11 @@ def render_review(intent: dict[str, Any]) -> str:
         f"- 组合净值：${intent['nav_usd']:,.2f}；单边换手：{intent['one_way_turnover']:.1%}",
         f"- 只减仓模式：{'是' if intent['reduce_only'] else '否'}",
     ]
+    if intent.get("cash_buffer"):
+        lines.append(
+            f"- 现金缓冲：买单按净值的 {1 - intent['cash_buffer']:.0%} 计算股数"
+            "（成交价可能高于参考价；若仍提示资金不足，少买 1 股即可）"
+        )
     lines += [f"  - 原因：{r}" for r in intent["reduce_only_reasons"]]
     lines += ["", "## 目标权重", "", "| 标的 | 权重 |", "|---|---:|"]
     lines += [f"| {s} | {w:.2%} |" for s, w in intent["target_weights"].items()]

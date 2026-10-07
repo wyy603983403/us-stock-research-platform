@@ -43,6 +43,7 @@ from us_stock_research.trading.order_intent import (
 )
 
 DRIFT_LIMIT = 0.05
+MAX_CASH_BUFFER = 0.05
 
 
 def month_end(day: date) -> bool:
@@ -181,7 +182,10 @@ def generate(
     quality: Any = None,
     breaker: float = BREAKER_DRAWDOWN,
     drift_limit: float = DRIFT_LIMIT,
+    cash_buffer: float = 0.0,
 ) -> dict[str, Any]:
+    if not 0.0 <= cash_buffer <= MAX_CASH_BUFFER:
+        raise ValueError(f"cash buffer {cash_buffer} outside 0..{MAX_CASH_BUFFER}")
     day = last_trading_day(as_of)
     slots = [str(s) for s in contract["data"]["defensive_assets"]]
     reasons: list[str] = []
@@ -216,8 +220,11 @@ def generate(
             f"below peak {holdings.peak_nav_usd:,.0f}"
         )
     reduce_only = bool(reasons)
+    # buys are sized at the signal close but filled a day later: a small cash buffer keeps the
+    # manual cash account from coming up short when prices rise (sizing only; drift uses targets)
+    sized = {s: w * (1 - cash_buffer) for s, w in weights.items()} if cash_buffer else weights
     orders, nav = build_orders(
-        weights, holdings, prices, reduce_only=reduce_only, min_trade_usd=min_trade_usd
+        sized, holdings, prices, reduce_only=reduce_only, min_trade_usd=min_trade_usd
     )
     if not triggers:
         orders = []
@@ -258,6 +265,7 @@ def generate(
         "reduce_only_reasons": reasons,
         "nav_usd": round(nav, 2),
         "target_weights": weights,
+        "cash_buffer": cash_buffer,
         "orders": orders,
         "one_way_turnover": round(sum(o["est_value_usd"] for o in orders) / nav, 4) if nav else 0,
         "git_sha": None,
@@ -305,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("orders"))
     parser.add_argument("--breaker", type=float, default=BREAKER_DRAWDOWN)
     parser.add_argument("--drift", type=float, default=DRIFT_LIMIT)
+    parser.add_argument(
+        "--cash-buffer", type=float, default=0.0, help="size buys to leave this share in cash"
+    )
     args = parser.parse_args(argv)
     contract = load_mix_contract(args.contract)
     vt_contract = load_lt_contract(Path(contract["data"]["aggressive_sleeve"]))
@@ -322,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
         quality=lambda s, b: [str(e) for e in audit_bars(s, b).errors],
         breaker=args.breaker,
         drift_limit=args.drift,
+        cash_buffer=args.cash_buffer,
     )
     intent["git_sha"] = _git_sha()
     if intent["orders"]:

@@ -50,9 +50,10 @@ if [ "$PAPER_ON" = "True" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12
 # 实盘（嘉信国际账户，用户在 App 手动下单）：账本存在且信号日不早于 configs/live.yml 的 start_signal_day 时出清单
 LIVE_OUT=""; LIVE_VERIFY=""; LIVE_ST=""
 LIVE_START=$(.venv/bin/python -c "import yaml;print((yaml.safe_load(open('configs/live.yml')) or {}).get('start_signal_day') or '')" 2>/dev/null)
+LIVE_BUFFER=$(.venv/bin/python -c "import yaml;print((yaml.safe_load(open('configs/live.yml')) or {}).get('cash_buffer') or 0)" 2>/dev/null)
 if [ -f portfolio/live/schwab.yml ] && [ -n "$LIVE_START" ] && [[ ! "$LASTDAY" < "$LIVE_START" ]]; then
   LIVE_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
-    --breaker 0.40 --holdings portfolio/live/schwab.yml --out-dir orders/live 2>&1 | tail -n 1) || LIVE_OUT="生成失败"
+    --breaker 0.40 --cash-buffer "${LIVE_BUFFER:-0}" --holdings portfolio/live/schwab.yml --out-dir orders/live 2>&1 | tail -n 1) || LIVE_OUT="生成失败"
   echo "实盘：$LIVE_OUT"
   if [ -f "orders/live/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "orders/live/$STUDY/$LASTDAY.md" 2>/dev/null; then
     LIVE_VERIFY=$(.venv/bin/usr-verify-intent --intent "orders/live/$STUDY/$LASTDAY.json" --contract $CONTRACT \

@@ -3,5 +3,7 @@
 # 服务器只在 portfolio/live/schwab.yml 存在（用户入金后运行 scripts/live.sh init 金额）且信号日 >= start_signal_day 时出实盘清单。
 start_signal_day: 2026-10-30
 max_capital_usd: 10000          # 用户确定的首批上限；超过需用户另行决定
+cash_buffer: 0.01               # 买单按账户 99% 计算：清单按信号日收盘价算股数、次日成交，留 1% 现金防止买不起
+                                # （2008–2026 回放：缓冲 0 时约每年 20 笔买单现金不足，1% 时约 3.5 笔；代价约 0.06%/年）
 broker: schwab-international
 execution: manual               # 自动下单需嘉信 API 获批 + 用户批准 + 修改 AGENTS.md

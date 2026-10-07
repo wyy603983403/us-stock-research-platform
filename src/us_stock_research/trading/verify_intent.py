@@ -21,6 +21,7 @@ from typing import Any
 from us_stock_research.calendar import is_trading_day
 
 TOL_WEIGHT = 1e-5
+MAX_BUFFER = 0.05
 
 
 def _last_of_month(day: date) -> bool:
@@ -112,10 +113,16 @@ def replay(
 
 
 def expected_orders(
-    weights: dict[str, float], positions: dict[str, float], cash: float, prices: dict[str, float]
+    weights: dict[str, float],
+    positions: dict[str, float],
+    cash: float,
+    prices: dict[str, float],
+    buffer: float = 0.0,
 ) -> dict[str, tuple[str, int]]:
     nav = cash + sum(n * prices[s] for s, n in positions.items())
     weights = {s: round(w, 6) for s, w in weights.items()}  # the list stores 6 decimals
+    if buffer:  # buys sized to leave ``buffer`` of the account in cash (stated in the list)
+        weights = {s: w * (1 - buffer) for s, w in weights.items()}
     out: dict[str, tuple[str, int]] = {}
     for s in sorted(set(weights) | set(positions)):
         have = positions.get(s, 0.0)
@@ -130,6 +137,9 @@ def check(
     intent: dict[str, Any], recomputed: dict[str, Any], expected: dict[str, Any]
 ) -> list[str]:
     problems = []
+    buffer = float(intent.get("cash_buffer") or 0.0)
+    if not 0.0 <= buffer <= MAX_BUFFER:
+        problems.append(f"现金缓冲 {buffer:.2%} 超出 0–{MAX_BUFFER:.0%}")
     for s in sorted(set(intent["target_weights"]) | set(recomputed["weights"])):
         a = intent["target_weights"].get(s, 0.0)
         b = recomputed["weights"].get(s, 0.0)
@@ -212,8 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         slots=slots,
     )
     expected = expected_orders(
-        recomputed["weights"], dict(holdings.positions), holdings.cash_usd, prices
-    )
+        recomputed["weights"], dict(holdings.positions), holdings.cash_usd, prices,
+        float(intent.get("cash_buffer") or 0.0),
+    )  # fmt: skip
     problems = check(intent, recomputed, expected)
     md = args.intent.with_suffix(".md")
     if md.exists() and "自动独立复核" not in md.read_text():

@@ -2332,6 +2332,20 @@ def test_verify_intent_independent_replay_matches() -> None:
     bad = dict(it, orders=[dict(o, shares=o["shares"] + 1) for o in it["orders"]])
     assert vi.check(bad, rec, exp)
     assert "结论：一致" in vi.render(rec, it, [])
+    # live cash buffer: buys sized on 99% of NAV, stated in the list and re-applied by the check
+    small = Holdings(cash_usd=10_000.0, peak_nav_usd=10_000.0)
+    itb = mi.generate(mix, {"rule": vt_rule}, bars, small, start, start, cash_buffer=0.01)
+    spent = sum(o["est_value_usd"] for o in itb["orders"] if o["side"] == "BUY")
+    assert itb["cash_buffer"] == 0.01 and spent <= 9_900.0
+    assert itb["target_weights"] == it["target_weights"]  # targets unchanged, sizing only
+    expb = vi.expected_orders(rec["weights"], {}, 10_000.0, prices, 0.01)
+    assert vi.check(itb, rec, expb) == []
+    assert vi.check(itb, rec, vi.expected_orders(rec["weights"], {}, 10_000.0, prices)) or (
+        expb == vi.expected_orders(rec["weights"], {}, 10_000.0, prices)
+    )
+    assert vi.check(dict(itb, cash_buffer=0.2), rec, expb)  # an implausible buffer is flagged
+    with pytest.raises(ValueError):
+        mi.generate(mix, {"rule": vt_rule}, bars, small, start, start, cash_buffer=0.2)
 
 
 def test_stage1_review_log_and_progress(tmp_path: Path) -> None:
