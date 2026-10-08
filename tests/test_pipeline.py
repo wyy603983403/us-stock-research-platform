@@ -2714,3 +2714,216 @@ def test_alpaca_fetch_many_pages_and_symbols() -> None:
     out = fetch_many(client, ["BRK-B", "AAPL"], date(2026, 10, 1), date(2026, 10, 8), "k", "s")
     assert [b.close for b in out["BRK-B"]] == [2.5, 3.0] and len(out["AAPL"]) == 1
     assert calls[0]["symbols"] == "BRK.B,AAPL" and calls[-1]["feed"] == "iex"
+
+
+def test_schwab_tokens_and_refresh(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+
+    from us_stock_research.trading import schwab_api as sw
+
+    url = sw.authorize_url("KEY", "https://127.0.0.1", state="s")
+    assert "client_id=KEY" in url and "redirect_uri=https%3A%2F%2F127.0.0.1" in url
+    assert sw.code_from_redirect("https://127.0.0.1/?code=C0.abc%40&session=x") == "C0.abc@"
+    with pytest.raises(ValueError):
+        sw.code_from_redirect("https://127.0.0.1/?session=x")
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = dict(x.split("=", 1) for x in request.content.decode().split("&"))
+        seen.append(body["grant_type"])
+        assert request.headers["Authorization"].startswith("Basic ")
+        return httpx.Response(
+            200, json={"access_token": f"A{len(seen)}", "refresh_token": "R", "expires_in": 1800}
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    t0 = datetime(2026, 11, 2, 14, 0, tzinfo=UTC)
+    tokens = sw.exchange_code(
+        http, "KEY", "SEC", "https://127.0.0.1", "https://127.0.0.1/?code=X", t0
+    )
+    path = tmp_path / "tok.json"
+    sw.save_tokens(path, tokens)
+    assert oct(path.stat().st_mode)[-3:] == "600"
+    assert sw.access_token(http, "KEY", "SEC", path, t0 + timedelta(minutes=5)) == "A1"
+    assert sw.access_token(http, "KEY", "SEC", path, t0 + timedelta(hours=1)) == "A2"
+    assert seen == ["authorization_code", "refresh_token"]
+    assert sw.refresh_days_left(sw.load_tokens(path), t0 + timedelta(days=5)) == pytest.approx(2)
+    with pytest.raises(sw.AuthExpired):
+        sw.access_token(http, "KEY", "SEC", path, t0 + timedelta(days=7, minutes=1))
+
+
+def test_schwab_snapshot_reconcile_and_fill_routing(tmp_path: Path) -> None:
+    from us_stock_research.trading import live_ledger, stocks
+    from us_stock_research.trading import schwab_api as sw
+
+    body = {
+        "securitiesAccount": {
+            "positions": [
+                {"instrument": {"symbol": "SSO", "assetType": "EQUITY"}, "longQuantity": 69.0},
+                {"instrument": {"symbol": "NVDA", "assetType": "EQUITY"}, "longQuantity": 5.0},
+            ],
+            "currentBalances": {"cashBalance": 1234.5},
+        }
+    }
+    snap = sw.parse_account(body)
+    assert snap == {"cash": 1234.5, "positions": {"SSO": 69.0, "NVDA": 5.0}}
+    syms = {"SPY", "SSO", "BIL", "TLT", "IEF", "GLD"}
+    live = {"positions": {"SSO": 69.0}}
+    st = {"positions": {"NVDA": {"qty": 4.0, "cost_usd": 700.0}}}
+    diffs = sw.reconcile(snap, live, st, syms)
+    assert diffs == ["NVDA：账户 5 股，个股账本 4 股"]
+    assert sw.strategy_matches(snap, live, syms)
+    assert not sw.strategy_matches(snap, {"positions": {"SSO": 68}}, syms)
+    order = {
+        "orderId": 111,
+        "status": "FILLED",
+        "closeTime": "2026-11-02T15:00:00+0000",
+        "orderLegCollection": [
+            {"instruction": "BUY", "quantity": 10, "instrument": {"symbol": "SSO"}}
+        ],
+        "orderActivityCollection": [
+            {"executionLegs": [{"quantity": 6, "price": 71.0}, {"quantity": 4, "price": 71.5}]}
+        ],
+    }
+    legs = sw.filled_legs(order)
+    assert legs[0]["qty"] == 10 and legs[0]["price"] == pytest.approx(71.2)
+    nv = dict(
+        order,
+        orderId=222,
+        orderLegCollection=[
+            {"instruction": "SELL", "quantity": 1, "instrument": {"symbol": "NVDA"}}
+        ],
+        orderActivityCollection=[{"executionLegs": [{"quantity": 1, "price": 200.0}]}],
+    )
+    live_path, fills = tmp_path / "live.yml", tmp_path / "fills.csv"
+    live_ledger.init(live_path, 5000.0, date(2026, 10, 30))
+    st_path = tmp_path / "stocks.yml"
+    stocks.init(st_path, 2000.0, date(2026, 10, 30))
+    s = stocks.load(st_path)
+    stocks.record(s, day=date(2026, 10, 30), symbol="NVDA", side="BUY", qty=2, price=150.0)
+    stocks.save(st_path, s)
+    cfg = {"ledger": str(st_path), "fills": str(tmp_path / "sf.csv")}
+    lines = sw.record_fills(
+        legs + sw.filled_legs(nv),
+        date(2026, 11, 2),
+        live_path=live_path,
+        live_fills=fills,
+        stocks_cfg=cfg,
+        strategy_symbols=syms,
+    )
+    assert len(lines) == 2 and lines[0].startswith("实盘 BUY SSO 10")
+    led = yaml.safe_load(live_path.read_text())
+    assert led["positions"] == {"SSO": 10.0} and led["cash_usd"] == pytest.approx(5000 - 712)
+    assert stocks.load(st_path)["positions"]["NVDA"]["qty"] == 1
+    again = sw.record_fills(
+        legs + sw.filled_legs(nv),
+        date(2026, 11, 2),
+        live_path=live_path,
+        live_fills=fills,
+        stocks_cfg=cfg,
+        strategy_symbols=syms,
+    )
+    assert again == [] and yaml.safe_load(live_path.read_text())["positions"] == {"SSO": 10.0}
+    # the stock section refuses strategy tickers
+    chk = stocks.check_trade(
+        stocks.load(st_path), {}, symbol="SPY", side="BUY", qty=1, price=700.0, limits={}
+    )
+    assert chk["blocking"]
+
+
+def test_schwab_submission_gates_and_order_flow(tmp_path: Path) -> None:
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from us_stock_research.trading import schwab_api as sw
+
+    folder = tmp_path / "orders/live/vt_plus_defensive"
+    folder.mkdir(parents=True)
+    intent = {
+        "mode": "live-candidate",
+        "signal_day": "2026-10-30",
+        "orders": [
+            {
+                "side": "SELL",
+                "symbol": "TLT",
+                "shares": 10,
+                "ref_price": 90.0,
+                "est_value_usd": 900.0,
+            },
+            {
+                "side": "BUY",
+                "symbol": "SSO",
+                "shares": 20,
+                "ref_price": 70.0,
+                "est_value_usd": 1400.0,
+            },
+        ],
+    }
+    ip = folder / "2026-10-30.json"
+    ip.write_text(_json.dumps(intent))
+    (folder / "2026-10-30.md").write_text("...\n**结论：一致**\n")
+    cfg = {
+        "orders_enabled": False,
+        "user_decision": "",
+        "stop_file": "portfolio/STOP_TRADING",
+        "session_window_et": ["09:45", "15:30"],
+        "max_orders_per_day": 8,
+        "max_order_usd": 10000,
+        "limit_offset_bps": 10,
+        "max_quote_deviation": 0.03,
+        "sell_fill_wait_minutes": 1,
+    }
+    monday_1000_et = datetime(2026, 11, 2, 15, 0, tzinfo=UTC)
+    r = sw.submission_gates(cfg, ip, monday_1000_et, root=tmp_path)
+    assert any("未打开" in x for x in r) and any("用户决定" in x for x in r)
+    on = dict(cfg, orders_enabled=True, user_decision="用户 2026-11-20 批准（测试）")
+    assert sw.submission_gates(on, ip, monday_1000_et, root=tmp_path) == []
+    assert any(
+        "执行日" in x
+        for x in sw.submission_gates(on, ip, monday_1000_et + timedelta(days=1), root=tmp_path)
+    )
+    assert any(
+        "时段" in x
+        for x in sw.submission_gates(
+            on, ip, datetime(2026, 11, 2, 21, 0, tzinfo=UTC), root=tmp_path
+        )
+    )
+    (tmp_path / "portfolio").mkdir()
+    (tmp_path / "portfolio/STOP_TRADING").touch()
+    assert any("停止" in x for x in sw.submission_gates(on, ip, monday_1000_et, root=tmp_path))
+    (tmp_path / "portfolio/STOP_TRADING").unlink()
+    (folder / "2026-10-30.md").write_text("**结论：不一致，请勿执行**")
+    assert any("复核" in x for x in sw.submission_gates(on, ip, monday_1000_et, root=tmp_path))
+    (folder / "2026-10-30.md").write_text("**结论：一致**")
+    (folder / "submitted.jsonl").write_text(_json.dumps({"signal_day": "2026-10-30"}) + "\n")
+    assert any("已经提交" in x for x in sw.submission_gates(on, ip, monday_1000_et, root=tmp_path))
+    # limit prices: capped offset from the quote; refused when the quote is far from the list
+    assert sw.limit_price("BUY", 70.0, {"askPrice": 70.5}, on) == pytest.approx(70.57)
+    assert sw.limit_price("SELL", 90.0, {"bidPrice": 89.8}, on) == pytest.approx(89.71)
+    assert sw.limit_price("BUY", 70.0, {"askPrice": 75.0}, on) is None
+
+    class Fake:
+        def __init__(self) -> None:
+            self.placed: list[tuple[str, str, int, float]] = []
+
+        def quotes(self, symbols: list[str]) -> dict[str, dict[str, float]]:
+            return {"TLT": {"bidPrice": 89.9}, "SSO": {"askPrice": 70.2}}
+
+        def place_limit(self, h: str, sym: str, side: str, qty: int, px: float) -> str:
+            self.placed.append((sym, side, qty, px))
+            return str(len(self.placed))
+
+        def order(self, h: str, oid: str) -> dict[str, str]:
+            return {"status": "FILLED"}
+
+        def snapshot(self, h: str) -> dict[str, Any]:
+            return {"cash": 1000.0, "positions": {}}
+
+    fake = Fake()
+    rows = sw.submit(fake, "H", intent, on, wait=lambda s: None)  # type: ignore[arg-type]
+    assert [p[:2] for p in fake.placed] == [("TLT", "SELL"), ("SSO", "BUY")]
+    assert fake.placed[1][2] == 14  # cash $1000 / 70.27 -> 14 shares, not 20
+    assert rows[1]["shares_sent"] == 14
+    assert sw.limit_order("SSO", "BUY", 14, 70.27)["price"] == "70.27"

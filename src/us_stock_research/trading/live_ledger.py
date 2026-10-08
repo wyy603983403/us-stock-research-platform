@@ -125,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     p_fill.add_argument("--price", type=float, required=True)
     p_fill.add_argument("--fee", type=float, default=0.0)
     p_fill.add_argument("--note", default="")
+    p_fill.add_argument("--force", action="store_true", help="record by hand although sync is on")
     p_cash = sub.add_parser("cash")
     p_cash.add_argument("--amount", type=float, required=True)
     p_cash.add_argument("--note", required=True)
@@ -141,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
             init(args.ledger, args.cash, datetime.now(UTC).date(), float(cap) if cap else None)
             print(f"实盘账本已建立：现金 ${args.cash:,.2f}（{args.ledger}）")
         elif args.cmd == "fill":
+            from us_stock_research.trading.schwab_api import auto_recording_on
+
+            if auto_recording_on() and not args.force:
+                print("未执行：嘉信只读同步已打开，成交会自动记账；确需手动记录请加 --force")
+                return 2
             close = _close(args.symbol.upper(), args.day)
             out = fill(args.ledger, args.fills, day=args.day, symbol=args.symbol.upper(),
                        side=args.side, qty=args.qty, price=args.price, fee=args.fee,

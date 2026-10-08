@@ -1,0 +1,20 @@
+# 嘉信 Trader API（用户 2026-10-08 决定申请）。分两步：
+#   1) 只读：同步持仓与现金、把成交自动记入账本（实盘策略账本与个股账本）。
+#   2) 自动下单：只有用户能打开。打开前须（a）在 AGENTS.md 写明决定与日期，
+#      （b）同步修改 .github/workflows/04-risk.yml 中“orders_enabled 保持 false”的检查，（c）填写 user_decision。
+# 密钥只放服务器 .env：SCHWAB_APP_KEY、SCHWAB_APP_SECRET、SCHWAB_REDIRECT_URI（如 https://127.0.0.1），
+# 可选 SCHWAB_ACCOUNT_LAST4（有多个账户时指定用哪个）。授权令牌存 usrtrade 用户主目录，不进备份。
+read_enabled: false            # 用户配好 .env 并完成 bash scripts/schwab.sh login 后改为 true
+orders_enabled: false          # 自动下单总开关（默认关；见上方说明）
+user_decision: ""              # 打开自动下单时填写，例如 "用户 2026-11-20 批准自动下单，上限按 configs/live.yml"
+
+strategy_symbols: [SPY, SSO, BIL, TLT, IEF, GLD]   # 这些代码的成交记入实盘策略账本，其余记入个股账本
+stop_file: portfolio/STOP_TRADING                  # 该文件存在时一律不下单（服务器上 touch 即可紧急停止）
+
+# 以下只在 orders_enabled: true 时生效
+session_window_et: ["09:45", "15:30"]   # 只在纽约时间这段时间内提交
+limit_offset_bps: 10                    # 限价 = 买：卖一价 × (1 + 0.10%)；卖：买一价 × (1 − 0.10%)；当日有效，不追价
+max_quote_deviation: 0.03               # 实时报价偏离清单参考价超过 3% 时不下该单（防数据错误或异常行情）
+max_orders_per_day: 8
+max_order_usd: 10000                    # 单笔上限
+sell_fill_wait_minutes: 10              # 先卖后买：最多等卖单成交 10 分钟，再按可用现金提交买单

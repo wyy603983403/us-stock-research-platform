@@ -36,3 +36,28 @@
 
 阶段 1 复核：Mac 运行 `bash scripts/review.sh 2026-10-02` 查看清单（含自动独立复核表），确认后记录；
 `bash scripts/review.sh` 只看进度。记录存 `portfolio/reviews/vt_plus_defensive.jsonl`，监控页显示进度。
+
+## 个股板块（2026-10-08）
+
+用户自己挑、在嘉信 App 手动下单；系统记账、提醒、每周出候选清单。另外的钱，不占 `configs/live.yml` 的策略资金。
+
+- 建账：`bash scripts/stocks.sh init 金额`（一次）。下单前：`bash scripts/stocks.sh plan 代码 BUY 股数 价格`（检查单只 ≤25%）；
+  成交后：`bash scripts/stocks.sh buy/sell 代码 股数 成交价`。分红、费用：`cash`；追加资金：`cash 金额 说明 deposit`；拆股：`split`。
+- 每日（流水线）：`usr-stocks monitor` 估值（Alpaca 收盘价），比成本跌 20%、单只超 25%、板块回撤 30% 时通知；
+  状态在 `artifacts/stocks/status.md`（`bash scripts/stocks.sh status`）。
+- 每周五信号日：`usr-stocks screen` 生成 `artifacts/stocks/screen_<日期>.md`（`bash scripts/stocks.sh screen`）。
+  规则见 `configs/stocks.yml`；**未经验证有超额收益**，只是参考清单。
+- 个股板块不能买卖策略代码（SPY/SSO/BIL/TLT/IEF/GLD），以免两本账混在一起。
+
+## 嘉信 Trader API（2026-10-08，默认关闭）
+
+1. 你在 developer.schwab.com 申请开发者账号与 “Trader API – Individual”，回调地址填 `https://127.0.0.1`。
+2. 批下来后，在服务器 `/opt/usr-trade/.env` 里加 `SCHWAB_APP_KEY`、`SCHWAB_APP_SECRET`、`SCHWAB_REDIRECT_URI=https://127.0.0.1`
+   （多个账户时加 `SCHWAB_ACCOUNT_LAST4`）。密钥只在服务器上，不发给任何人、不进 Git。
+3. 服务器 root 运行一次 `bash /opt/usr-trade/app/scripts/server_schwab_setup.sh`（装 09:50 的提交定时器；下单开关关着时它什么都不做）。
+4. Mac：`bash scripts/schwab.sh login` 登录授权（**每 7 天一次**，到期前两天通知提醒）。
+5. 把 `configs/schwab_api.yml` 的 `read_enabled` 改为 `true` 并部署：每日流水线自动记成交（策略代码进实盘账本，其余进个股账本）、
+   对账，不一致时通知。此后不要再手动 `live.sh fill` / `stocks.sh buy`（会提示，确需手动加 `--force`）。
+6. 自动下单（`orders_enabled`）只有你能打开：同时在 AGENTS.md 写明决定、改 `.github/workflows/04-risk.yml` 的检查、填 `user_decision`。
+   打开后每个交易日纽约 09:50 提交前一晚通过独立复核的清单：先卖后买、当日有效限价（报价 ±0.10%）、报价偏离清单参考价 3% 以上不下、
+   账户与账本不一致不下、同一清单只提交一次。紧急停止：`bash scripts/schwab.sh stop`（恢复：`resume`）。

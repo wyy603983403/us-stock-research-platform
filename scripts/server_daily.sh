@@ -47,6 +47,14 @@ if [ -f "orders/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "order
   esac
 fi
 if [ "$PAPER_ON" = "True" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
+# 嘉信接口（只读，configs/schwab_api.yml read_enabled）：先把今天的成交记入账本，再对账；授权快到期时提醒
+SW_READ=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/schwab_api.yml')) or {}).get('read_enabled')))" 2>/dev/null)
+SW_FILLS=""; SW_SNAP=""
+if [ "$SW_READ" = "True" ]; then
+  SW_FILLS=$(.venv/bin/usr-schwab record-fills --day "$LASTDAY" 2>&1 | tail -n 1); echo "$SW_FILLS"
+  SW_SNAP=$(.venv/bin/usr-schwab snapshot 2>&1 | tail -n 1); echo "$SW_SNAP"
+fi
+SW_TOKEN=$(.venv/bin/usr-schwab status --line 2>/dev/null | tail -n 1)
 # 实盘（嘉信国际账户，用户在 App 手动下单）：账本存在且信号日不早于 configs/live.yml 的 start_signal_day 时出清单
 LIVE_OUT=""; LIVE_VERIFY=""; LIVE_ST=""
 LIVE_START=$(.venv/bin/python -c "import yaml;print((yaml.safe_load(open('configs/live.yml')) or {}).get('start_signal_day') or '')" 2>/dev/null)
@@ -86,11 +94,17 @@ case "$VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 独立复核未�
 $NOTE";; esac
 case "$LIVE_OUT" in ""|*"订单 0 笔"*) ;; *)
   NOTE="${NOTE:+$NOTE
-}【实盘·嘉信手动】$LIVE_OUT（以最新清单为准，之前未执行的清单作废；成交后用 scripts/live.sh fill 记录）";; esac
+}【实盘·嘉信手动】$LIVE_OUT（以最新清单为准，之前未执行的清单作废；$([ "$SW_READ" = "True" ] && echo "成交会自动记账" || echo "成交后用 scripts/live.sh fill 记录")）";; esac
 case "$LIVE_VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 实盘清单独立复核未通过，已搁置，请勿下单
 $NOTE";; esac
 [ -n "$LIVE_ST" ] && NOTE="${NOTE:+$NOTE
 }实盘账户：$LIVE_ST"
+case "$SW_FILLS" in *实盘*|*个股*|*未记录*) NOTE="${NOTE:+$NOTE
+}$SW_FILLS";; esac
+case "$SW_SNAP" in *不一致*|*出错*|*授权*) NOTE="${NOTE:+$NOTE
+}⚠️ 嘉信对账：$SW_SNAP";; esac
+[ -n "$SW_TOKEN" ] && NOTE="${NOTE:+$NOTE
+}$SW_TOKEN"
 case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
 }【个股】$STK_OUT";; esac
 [ -n "$STK_SCREEN" ] && NOTE="${NOTE:+$NOTE

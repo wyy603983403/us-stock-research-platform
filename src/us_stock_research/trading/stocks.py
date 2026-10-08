@@ -28,6 +28,7 @@ from typing import Any
 import yaml
 
 CONFIG = Path("configs/stocks.yml")
+STRATEGY_SYMBOLS = frozenset({"SPY", "SSO", "BIL", "TLT", "IEF", "GLD"})  # configs/schwab_api.yml
 FILL_COLUMNS = [
     "recorded_at",
     "day",
@@ -126,6 +127,8 @@ def check_trade(
     pos = dict(ledger.get("positions") or {})
     have = float((pos.get(symbol) or {}).get("qty", 0.0))
     warnings, blocking = [], []
+    if symbol in STRATEGY_SYMBOLS:
+        blocking.append(f"{symbol} 是实盘策略使用的代码，个股板块不能买卖它（否则两本账混在一起）")
     if side == "SELL" and qty > have + 1e-9:
         blocking.append(f"卖出 {qty:g} 股 {symbol}，但账本只有 {have:g} 股")
     cash_after = float(ledger["cash_usd"]) - (
@@ -418,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
         p.add_argument("--fee", type=float, default=0.0)
         p.add_argument("--day", type=date.fromisoformat)
         p.add_argument("--note", default="")
+        p.add_argument("--force", action="store_true", help="record by hand although sync is on")
     p = sub.add_parser("cash")
     p.add_argument("--amount", type=float, required=True)
     p.add_argument("--note", required=True)
@@ -466,6 +470,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
                 for w in chk["warnings"]:
                     print(f"提醒：{w}")
                 return 0
+            from us_stock_research.trading.schwab_api import auto_recording_on
+
+            if auto_recording_on() and not args.force:
+                print("未执行：嘉信只读同步已打开，成交会自动记账；确需手动记录请加 --force")
+                return 2
             day = args.day or datetime.now(UTC).date()
             realized = record(
                 ledger, day=day, symbol=sym, side=side, qty=args.qty, price=args.price, fee=args.fee

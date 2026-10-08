@@ -82,3 +82,9 @@
     40/40/20，第三部分 = French BIG HiPRIOR + BIG HiOP 各半，扣 0.5%/年，实施用 MTUM/QUAL。usr-collect-factors 新增两份
     日度 2×3 组合与 --local-dir（Mac 网络慢时用沙盒下载的 zip）。
 41. factor_sleeve_mix 未通过（夏普差 +0.06，区间 −0.06 至 +0.16）；其余标准均满足；试验登记 13 组。运行中的策略不变。
+42. $10k 实盘回放（docs/results/live-10k-replay.md）：整股差距 −0.03%/年，总差距约 −1%/年（滑点、预提税）；每年约 45 个下单日；
+    实盘清单加 1% 现金缓冲（configs/live.yml cash_buffer，独立复核同样按清单声明重算）。
+43. 用户 2026-10-08：个股板块（系统每周筛候选、用户自己挑并手动下单、另外的钱、只提醒不强制：单只 ≤25%、跌 20%、板块回撤 30%）。
+    usr-stocks + scripts/stocks.sh；Alpaca 多代码日线（fetch_many）。
+44. 用户 2026-10-08：申请嘉信 Trader API。usr-schwab（授权/7 天续期提醒/只读对账/自动记成交/下单闸门）+ scripts/schwab.sh、
+    server_submit.sh、server_schwab_setup.sh；configs/schwab_api.yml read_enabled、orders_enabled 均为 false，04 风控门禁检查后者保持 false。

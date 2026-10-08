@@ -1,9 +1,9 @@
 name: 04 Risk gate
 on:
   pull_request:
-    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml"]
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml", "src/us_stock_research/trading/schwab_api.py"]
   push:
-    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml"]
+    paths: ["src/us_stock_research/risk.py", "configs/**", "research/**", "AGENTS.md", ".github/workflows/04-risk.yml", "src/us_stock_research/trading/schwab_api.py"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,4 +23,6 @@ jobs:
         run: "grep -Eq '^trading_enabled: false$' configs/risk/default.yml"
       - name: manual live capital cap stays at the user's first-batch limit
         run: "grep -Eq '^max_capital_usd: 10000( |$)' configs/live.yml"
-      - run: python -m pytest -q tests/test_pipeline.py -k "risk or contract or paper or live"
+      - name: Schwab automatic orders stay off until the user decides (and records it in AGENTS.md)
+        run: "grep -Eq '^orders_enabled: false( |$)' configs/schwab_api.yml"
+      - run: python -m pytest -q tests/test_pipeline.py -k "risk or contract or paper or live or schwab"
