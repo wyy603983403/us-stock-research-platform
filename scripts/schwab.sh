@@ -25,7 +25,6 @@ case "$cmd" in
   snapshot) run ".venv/bin/usr-schwab snapshot" ;;
   fills)    day=""; [ -n "${1:-}" ] && day="--day $(printf '%s' "$1" | tr -cd '0-9-')"
             run ".venv/bin/usr-schwab record-fills $day" ;;
-  stop)     ssh -i "$KEY" "$HOST" "su -s /bin/bash usrtrade -c 'touch /opt/usr-trade/state/portfolio/STOP_TRADING'" && echo "已停止自动下单" ;;
-  resume)   ssh -i "$KEY" "$HOST" "su -s /bin/bash usrtrade -c 'rm -f /opt/usr-trade/state/portfolio/STOP_TRADING'" && echo "已解除停止" ;;
+  stop|resume) exec bash scripts/control.sh "$cmd" ;;
   *) echo "未知命令 $cmd"; exit 1 ;;
 esac

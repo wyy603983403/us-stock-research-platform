@@ -61,3 +61,11 @@
 6. 自动下单（`orders_enabled`）只有你能打开：同时在 AGENTS.md 写明决定、改 `.github/workflows/04-risk.yml` 的检查、填 `user_decision`。
    打开后每个交易日纽约 09:50 提交前一晚通过独立复核的清单：先卖后买、当日有效限价（报价 ±0.10%）、报价偏离清单参考价 3% 以上不下、
    账户与账本不一致不下、同一清单只提交一次。紧急停止：`bash scripts/schwab.sh stop`（恢复：`resume`）。
+
+## 手机指令（ntfy，2026-10-08）
+
+每条通知下方有两个按钮：**查询状态**（回推净值、仓位、持仓、需要关注的事项）和**紧急停止**（创建 `portfolio/STOP_TRADING`：
+清单照常生成，但不发模拟单、不做嘉信自动下单）。按钮把指令发到单独的随机频道 `NTFY_CMD_TOPIC`（服务器 .env），
+由 `usr-commands.service` 监听；只认“状态 / 停止”，其他一律忽略，超过 10 分钟的旧消息不执行，记录在 `logs/commands.log`。
+**恢复只能在 Mac 上**：`bash scripts/control.sh resume`（`status` 查看是否停止中）。频道名泄露时最坏情况只是被人“停止”。
+

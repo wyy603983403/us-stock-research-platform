@@ -43,6 +43,10 @@ if ! grep -q '^NTFY_TOPIC=' $BASE/.env; then
   echo "NTFY_TOPIC=usr-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> $BASE/.env
 fi
 TOPIC=$(grep '^NTFY_TOPIC=' $BASE/.env | cut -d= -f2)
+# 手机指令通道（另一个随机频道，只接受“状态 / 停止”；见 src/us_stock_research/trading/commands.py）
+if ! grep -q '^NTFY_CMD_TOPIC=' $BASE/.env; then
+  echo "NTFY_CMD_TOPIC=usrcmd-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> $BASE/.env
+fi
 
 echo "-- systemd 定时器（纽约时间周一至周五 21:15，23:45 再补一次；错过的开机后补跑）"
 cat > /etc/systemd/system/usr-trade.service <<UNIT
@@ -65,6 +69,19 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+cat > /etc/systemd/system/usr-commands.service <<UNIT
+[Unit]
+Description=Phone commands over ntfy (status / emergency stop only)
+After=network-online.target
+[Service]
+User=usrtrade
+WorkingDirectory=$APP
+ExecStart=$APP/.venv/bin/usr-commands --listen
+Restart=always
+RestartSec=30
+[Install]
+WantedBy=multi-user.target
+UNIT
 cat > /etc/systemd/system/usr-dashboard.service <<UNIT
 [Unit]
 Description=Trading dashboard (static page, localhost only; open through an SSH tunnel)
@@ -80,6 +97,7 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now usr-trade.timer >/dev/null
 systemctl enable --now usr-dashboard.service >/dev/null
+systemctl enable usr-commands.service >/dev/null 2>&1; systemctl restart usr-commands.service || echo "手机指令服务启动失败（见 journalctl -u usr-commands）"
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"
 echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/$TOPIC）"

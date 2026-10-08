@@ -30,8 +30,21 @@ if r.get("code", r.get("StatusCode", 0)) != 0:
 PY
 fi
 if [ -n "$TOPIC" ]; then
-  curl -s -m 20 -H "Title: =?UTF-8?B?$(printf '%s' "$TITLE" | base64 | tr -d '\n')?=" \
-    -d "$BODY" "https://ntfy.sh/$TOPIC" >/dev/null || echo "ntfy 发送失败"
+  # JSON 发布（中文标题、正文不需要转码）；配了 NTFY_CMD_TOPIC 时附“查询状态 / 紧急停止”两个按钮
+  NTFY_CMD_TOPIC=$(get NTFY_CMD_TOPIC) "$PY" - "$TOPIC" "$TITLE" "$BODY" <<'PY' || echo "ntfy 发送失败"
+import json, os, sys, urllib.request
+topic, title, body = sys.argv[1:4]
+msg = {"topic": topic, "title": title, "message": body or title}
+cmd = os.environ.get("NTFY_CMD_TOPIC", "").strip()
+if cmd:
+    url = f"https://ntfy.sh/{cmd}"
+    msg["actions"] = [
+        {"action": "http", "label": "查询状态", "url": url, "method": "POST", "body": "状态"},
+        {"action": "http", "label": "紧急停止", "url": url, "method": "POST", "body": "停止"},
+    ]
+req = urllib.request.Request("https://ntfy.sh/", json.dumps(msg).encode(), {"Content-Type": "application/json"})
+urllib.request.urlopen(req, timeout=20).read()
+PY
 fi
 if [ -n "$BARK" ]; then
   curl -s -m 20 -X POST "https://api.day.app/$BARK" -H 'Content-Type: application/json; charset=utf-8' \

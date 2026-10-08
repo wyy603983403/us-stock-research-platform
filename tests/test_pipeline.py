@@ -3045,3 +3045,42 @@ def test_vt_only_operating_config() -> None:
     )
     prices = {s: v[days.index(start)] for s, v in series.items()}
     assert vi.check(it, rec, vi.expected_orders(rec["weights"], {}, 100_000.0, prices)) == []
+
+
+def test_phone_commands_only_status_and_stop(tmp_path: Path) -> None:
+    import json as _json
+
+    from us_stock_research.trading import commands as cmd
+
+    assert cmd.parse(" 状态 ") == "status" and cmd.parse("STOP") == "stop"
+    assert (
+        cmd.parse("恢复") is None and cmd.parse("resume") is None and cmd.parse("rm -rf /") is None
+    )
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts/status.json").write_text(
+        _json.dumps(
+            {
+                "study": "vt_only",
+                "day": "2026-10-09",
+                "source": "Alpaca 模拟盘",
+                "portfolio": {"nav": 100500.0, "drawdown": -0.01},
+                "signal": {"target_exposure": 2.0, "current_exposure": 1.98},
+                "holdings": {"positions": {"SSO": 1390}},
+                "attention": [],
+            }
+        )
+    )
+    text = cmd.execute("status", tmp_path)
+    assert "运行中" in text and "净值 $100,500" in text and "SSO 1390" in text
+    out = cmd.execute("stop", tmp_path)
+    assert (tmp_path / "portfolio/STOP_TRADING").exists() and "已紧急停止" in out
+    assert "已经是停止状态" in cmd.execute("stop", tmp_path)
+    assert "⛔" in cmd.execute("status", tmp_path)
+    assert cmd.execute("whatever", tmp_path) == cmd.HELP
+    now = 1_800_000_000.0
+    old = {"event": "message", "time": now - 3600, "message": "停止"}
+    assert cmd.handle_message(old, now, 0.0) == (None, 0.0)  # stale: not executed
+    assert cmd.handle_message({"event": "open"}, now, 0.0) == (None, 0.0)
+    fresh = {"event": "message", "time": now - 5, "message": "你好"}
+    assert cmd.handle_message(fresh, now, 0.0) == (cmd.HELP, now)
+    assert cmd.handle_message(fresh, now + 3, now)[0] is None  # rate limit

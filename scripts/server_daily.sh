@@ -46,7 +46,8 @@ if [ -f "orders/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "order
     echo "已搁置 orders/$STUDY/$LASTDAY.json（复核未通过）";;
   esac
 fi
-if [ "$PAPER_ON" = "True" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
+STOPPED=""; [ -f portfolio/STOP_TRADING ] && STOPPED=1   # 紧急停止（手机“停止”或 scripts/control.sh stop）
+if [ "$PAPER_ON" = "True" ] && [ -z "$STOPPED" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
 # 嘉信接口（只读，configs/schwab_api.yml read_enabled）：先把今天的成交记入账本，再对账；授权快到期时提醒
 SW_READ=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/schwab_api.yml')) or {}).get('read_enabled')))" 2>/dev/null)
 SW_FILLS=""; SW_SNAP=""
@@ -109,6 +110,8 @@ case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
 }【个股】$STK_OUT";; esac
 [ -n "$STK_SCREEN" ] && NOTE="${NOTE:+$NOTE
 }【个股】$STK_SCREEN（bash scripts/stocks.sh screen 查看）"
+[ -n "$STOPPED" ] && NOTE="⛔ 紧急停止中：清单照常生成，但不发模拟单、不自动下单（恢复：Mac 上 bash scripts/control.sh resume）
+$NOTE"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE
 }$(echo "$ST_OUT" | grep '需要关注')"
 # 每个交易日都发一条简报（只发一次：第二次运行仅在有异常时发）

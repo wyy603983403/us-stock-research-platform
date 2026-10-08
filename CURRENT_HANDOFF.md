@@ -95,4 +95,6 @@
 46. 用户 2026-10-08 决定只跑进攻部分：configs/operating.yml（study vt_only，research/vt-only/study.yml = aggressive_weight 1.0 的
     运行配置，等同 sp500_trend_voltarget；model_start 2026-10-08）。server_daily/server_submit/live.sh/review.sh/paper_broker.yml
     都从这里取策略名；vt_plus_defensive 停止运行（订单与演练账本保留）。当时模型敞口 2.0 倍（100% SSO）。
+47. 手机指令（用户 2026-10-08 同意）：usr-commands（ntfy 指令频道 NTFY_CMD_TOPIC，只认“状态 / 停止”）+ 通知上的两个按钮；
+    停止文件 portfolio/STOP_TRADING 现在也拦住模拟盘下单；恢复只在 Mac：scripts/control.sh resume。
 
