@@ -9,7 +9,8 @@ series:
   CPIAUCSL: 美国 CPI（月，指数）
   UNRATE: 失业率（月，%）
   INDPRO: 工业生产指数（月）
-  BAMLH0A0HYM2: 高收益债信用利差（%）
+  BAMLH0A0HYM2: 高收益债信用利差（%）（FRED 只提供最近 3 年）
+  BAA10Y: 穆迪 Baa 公司债收益率 − 10 年期国债（%，1986 起；sp500_ml_rank 用）
   BAMLC0A0CM: 投资级公司债信用利差（%）
   DTWEXBGS: 广义美元指数（日）
   VIXCLS: VIX 波动率指数（日）

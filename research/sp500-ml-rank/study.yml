@@ -78,16 +78,16 @@ features:                                  # 方向（+ 越高越好，− 越�
   macro:
     sensitivity:                           # 股票层面：过去 252 个交易日（截至信号日前一日，至少 200 个完整观测）
       regression: >                        # 日收益对下列 5 个日变化做多元 OLS，取后 4 个系数（已控制大盘）
-        r_stock = a + b0·r_SPY + b1·ΔDGS10 + b2·r_DTWEXBGS + b3·r_DCOILWTICO + b4·ΔBAMLH0A0HYM2
+        r_stock = a + b0·r_SPY + b1·ΔDGS10 + b2·r_DTWEXBGS + b3·r_DCOILWTICO + b4·ΔBAA10Y
         （Δ 为百分点差；r 为日变动率；油价当日或前一日 ≤0 的观测剔除）
       beta_rate: {def: "b1：对 10 年期美债收益率变化的敏感度", dir: none}
       beta_dollar: {def: "b2：对美元指数（广义）变动的敏感度", dir: none}
       beta_oil: {def: "b3：对 WTI 油价变动的敏感度", dir: none}
-      beta_credit: {def: "b4：对高收益债利差变化的敏感度", dir: none}
+      beta_credit: {def: "b4：对信用利差（穆迪 Baa 公司债收益率 − 10 年期国债，BAA10Y）变化的敏感度", dir: none}
     market_state:                          # 当月所有股票同一个值（原始值，不做百分位）
       vix: {def: "VIXCLS 水平", dir: none}
       curve_10y2y: {def: "T10Y2Y 水平", dir: none}
-      hy_spread: {def: "BAMLH0A0HYM2 水平", dir: none}
+      credit_spread: {def: "BAA10Y 水平", dir: none}
       rate_chg_63: {def: "DGS10 过去 63 个交易日的变化（百分点）", dir: none}
       market_mom_252: {def: "SPY 复权价过去 252 个交易日涨幅（截至信号日）", dir: none}
 fundamentals:                              # 与 sp500_quality_value_pit 完全相同（含其 2026-10-01 修订后的标签）
@@ -157,5 +157,14 @@ amendments:
       用户在登记后、任何特征或收益计算之前提出基本面应包含宏观因素（2026-10-08）。宏观变量对同月所有股票相同，
       不能单独排序，因此以“股票对宏观的敏感度”和“市场环境 × 股票特征的交互（由树模型学习）”两种方式加入。
       线性对照、主检验、门槛均不变；另报告不含宏观的机器学习版本。
+  - date: 2026-10-08
+    before_any_return: true
+    before_any_feature_value: false
+    change: 信用利差序列由 BAMLH0A0HYM2 改为 BAA10Y（beta_credit 的回归变量与市场环境变量 hy_spread→credit_spread）
+    reason: >
+      只看输入的冒烟测试（2012 年 1–3 月的特征覆盖率）发现 FRED 上的 ICE BofA 高收益利差只提供最近 3 年
+      （本地数据 2023-10 起），2012–2023 年全缺，导致 4 个宏观敏感度全部缺失。BAA10Y（穆迪 Baa 公司债 − 10 年期国债，
+      1986 年起的日度序列，同为信用风险溢价）是可得的最接近替代。注意：本合同原写“可修订一次”，这是第二次修订，
+      两次都在计算任何策略收益之前；冒烟测试只打印过特征覆盖率和单只股票（AAPL 2012-01）的一行原始数据。
 human_review:
   approved: false
