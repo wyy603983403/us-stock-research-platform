@@ -2975,3 +2975,73 @@ def test_ml_rank_pieces() -> None:
     traded = abs(held["A"] - 0) + abs(held["B"] - 0.5) + 0.5
     assert out[1]["strategy"] == pytest.approx(0.5 * -0.02 + 0.5 * 0.01 - traded * 1e-3)
     assert out[0]["coverage"] == pytest.approx(0.9)
+
+
+def test_vt_only_operating_config() -> None:
+    import random
+
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.research.sleeve_mix import load_mix_contract
+    from us_stock_research.trading import mix_intent as mi
+    from us_stock_research.trading import verify_intent as vi
+    from us_stock_research.trading.order_intent import Holdings
+
+    ops = yaml.safe_load((ROOT / "configs/operating.yml").read_text())
+    contract = load_mix_contract(ROOT / ops["contract"])
+    assert contract["name"] == ops["study"] == "vt_only"
+    assert contract["rule"]["aggressive_weight"] == 1.0 and contract["human_review"]["approved"]
+    paper = yaml.safe_load((ROOT / "configs/paper_broker.yml").read_text())
+    assert paper["study"] == ops["study"]
+    days = trading_days(date(2025, 1, 2), date(2026, 6, 30))
+    rng = random.Random(29)
+    series = {}
+    for sym, drift, vol in (
+        ("SPY", 0.0006, 0.008),
+        ("SSO", 0.0012, 0.016),
+        ("BIL", 0.00015, 0.0),
+        ("TLT", 0.0, 0.012),
+        ("IEF", 0.0, 0.006),
+        ("GLD", 0.0, 0.015),
+    ):
+        p, xs_ = 100.0, []
+        for _ in days:
+            p *= 1 + rng.gauss(drift, vol)
+            xs_.append(p)
+        series[sym] = xs_
+    adj = {s: dict(zip(days, v, strict=True)) for s, v in series.items()}
+    vt_rule = {
+        "sma_days": 200,
+        "vol_window_days": 20,
+        "vol_target": 0.25,
+        "max_leverage": 2.0,
+        "rebalance_band": 0.25,
+    }
+    slots = ["TLT", "IEF", "GLD"]
+    start = date(2025, 11, 3)
+    path = mi.model_path(adj, days, start, vt_rule, contract["rule"], slots)
+    for row in path:
+        assert set(row["weights"]) <= {"SPY", "SSO", "BIL"}
+        assert not any(e.split()[0] in slots for e in row["events"])  # no defensive switches
+        assert row["aggressive_share"] == pytest.approx(1.0)
+    bars = {
+        s: [DailyBar(d, x, x, x, x, x, 1) for d, x in zip(days, v, strict=True)]
+        for s, v in series.items()
+    }
+    mix = {**contract, "data": {**contract["data"], "defensive_assets": slots}}
+    it = mi.generate(mix, {"rule": vt_rule}, bars, Holdings(cash_usd=100_000.0), start, start)
+    assert it["orders"] and {o["symbol"] for o in it["orders"]} <= {"SPY", "SSO", "BIL"}
+    assert "无防守部分" in mi.summary_line(it)
+    rec = vi.replay(
+        adj,
+        start,
+        start,
+        sma_days=200,
+        vol_days=20,
+        vol_target=0.25,
+        cap=2.0,
+        band=0.25,
+        aggressive_weight=1.0,
+        slots=slots,
+    )
+    prices = {s: v[days.index(start)] for s, v in series.items()}
+    assert vi.check(it, rec, vi.expected_orders(rec["weights"], {}, 100_000.0, prices)) == []

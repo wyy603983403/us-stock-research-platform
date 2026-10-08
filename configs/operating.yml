@@ -1,0 +1,6 @@
+# 正在运行的策略（服务器流水线、模拟盘、实盘清单、复核脚本都从这里读取）。只由用户决定更改。
+# 2026-10-08 用户决定：由 vt_plus_defensive（50/50）改为只跑进攻部分 vt_only（= sp500_trend_voltarget）。
+study: vt_only
+contract: research/vt-only/study.yml
+model_start: 2026-10-08        # 模型重放起点 = 本策略首份订单的信号日（定下后不要改）
+previous: {study: vt_plus_defensive, contract: research/vt-plus-defensive/study.yml, model_start: 2026-10-02, until: 2026-10-07}

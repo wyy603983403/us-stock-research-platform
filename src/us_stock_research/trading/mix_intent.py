@@ -106,7 +106,8 @@ def model_path(
                 now = above(s, i)
                 if now != on[s]:
                     on[s] = now
-                    events.append(f"{s} {'on' if now else 'off'}")
+                    if wa < 1:  # a zero-weight defensive sleeve (vt_only) never trades
+                        events.append(f"{s} {'on' if now else 'off'}")
         total = v_a + sum(v_slot.values())
         if month_end(d):
             v_a = wa * total
@@ -276,6 +277,8 @@ def generate(
 def summary_line(intent: dict[str, Any]) -> str:
     sig = intent["signal"]
     slots = "，".join(f"{s} {'持有' if v else '转国库券'}" for s, v in sig["slots_on"].items())
+    if sig["aggressive_share"] >= 0.9999:  # vt_only: no defensive sleeve to report
+        slots = "无防守部分"
     orders = intent["orders"]
     return (
         f"{intent['signal_day']}：SPY {sig['close']:.2f} "

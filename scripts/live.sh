@@ -21,7 +21,8 @@ case "$cmd" in
   cash)  [ $# -ge 2 ] || { echo "用法：bash scripts/live.sh cash 金额 说明"; exit 1; }
          note=$(printf '%s' "$2" | tr -d "'\"")
          run ".venv/bin/usr-live cash --amount $1 --note \"$note\"" ;;
-  orders) ssh -i "$KEY" "$HOST" "f=\$(ls -1 /opt/usr-trade/state/orders/live/vt_plus_defensive/*.md 2>/dev/null | tail -n 1); [ -n \"\$f\" ] && cat \"\$f\" || echo 还没有实盘清单" ;;
+  orders) STUDY=$(sed -n 's/^study: *\([a-z_0-9]*\).*/\1/p' configs/operating.yml)
+         ssh -i "$KEY" "$HOST" "f=\$(ls -1 /opt/usr-trade/state/orders/live/$STUDY/*.md 2>/dev/null | tail -n 1); [ -n \"\$f\" ] && cat \"\$f\" || echo 还没有实盘清单" ;;
   show)  run ".venv/bin/usr-live show" ;;
   *) echo "未知命令 $cmd"; exit 1 ;;
 esac

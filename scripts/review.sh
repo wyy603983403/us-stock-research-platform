@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 HOST=$(cut -d' ' -f1 portfolio/.vt_on_server 2>/dev/null || true)
 [ -n "$HOST" ] || { echo "找不到服务器地址（portfolio/.vt_on_server），先运行 scripts/server_deploy.sh"; exit 1; }
 KEY="${USR_KEY:-$HOME/.ssh/evunea_deploy_ed25519}"
-STUDY=vt_plus_defensive
+STUDY=$(sed -n 's/^study: *\([a-z_0-9]*\).*/\1/p' configs/operating.yml)
 RUN="cd /opt/usr-trade/app && su -s /bin/bash usrtrade -c"
 DAY="${1:-}"; NOTE="${2:-}"
 if [ -z "$DAY" ]; then

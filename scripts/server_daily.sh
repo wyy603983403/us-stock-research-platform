@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 服务器每日流水线（usrtrade 用户，由 systemd 定时器调用；可重复运行）：
-#   策略：vt_plus_defensive（用户 2026-10-04 批准；50% 标普趋势 + 波动率目标，50% TLT/IEF/GLD 趋势）
+#   策略：configs/operating.yml（2026-10-08 起 vt_only = 只跑标普趋势 + 波动率目标；此前 vt_plus_defensive 50/50）
 #   数据（SPY/SSO/BIL/TLT/IEF/GLD + FRED）→ 演练记账 →（模拟盘打开时：对账）→ 出单 →（模拟盘打开时：发收盘竞价单）→ 状态 → 通知
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -17,9 +17,9 @@ print(f"数据 {r['date']}：失败 {len(r['failed'])}，未拿到最新 {len(r.
       f"（不一致 {len(r.get('crosscheck_mismatch', []))}）")
 PY
 .venv/bin/usr-collect-macro --execute >/dev/null 2>&1 || echo "FRED 部分失败"
-STUDY=vt_plus_defensive
-CONTRACT=research/vt-plus-defensive/study.yml
-MODEL_START=2026-10-02                      # 模型重放起点 = 本组合首份订单的信号日（不要改）
+OPS=$(.venv/bin/python -c "import yaml;c=yaml.safe_load(open('configs/operating.yml'));print(c['study'],c['contract'],c['model_start'])")
+read -r STUDY CONTRACT MODEL_START <<< "$OPS"   # 正在运行的策略与模型重放起点（configs/operating.yml）
+[ -n "$MODEL_START" ] || { echo "读取 configs/operating.yml 失败"; bash scripts/notify.sh "美股交易系统" "⚠️ 读取 configs/operating.yml 失败，今天未运行"; exit 1; }
 LEDGER=portfolio/rehearsal/$STUDY.yml
 PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('enabled')))")
 # 模拟盘打开后持仓以模拟账户为准，演练账本冻结（不再记账）

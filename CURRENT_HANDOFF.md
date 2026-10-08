@@ -92,4 +92,7 @@
     修订两次（ce4de63 宏观；da2909f BAA10Y 替代只有 3 年历史的 ICE BofA 利差），均在任何收益之前。
     usr-ml-panel（特征面板，需价格库）/ usr-ml-rank（LightGBM 滚动训练与组合，需 '.[ml]'）/ usr-verify-ml（独立重算 + 引擎重放）。
     在工作区用 Mac 数据库副本运行（VM 单次命令 180 秒限制）。未通过：超额区间（−0.23%，+1.01%）/月，DSR 0.945；试验登记 14 组。
+46. 用户 2026-10-08 决定只跑进攻部分：configs/operating.yml（study vt_only，research/vt-only/study.yml = aggressive_weight 1.0 的
+    运行配置，等同 sp500_trend_voltarget；model_start 2026-10-08）。server_daily/server_submit/live.sh/review.sh/paper_broker.yml
+    都从这里取策略名；vt_plus_defensive 停止运行（订单与演练账本保留）。当时模型敞口 2.0 倍（100% SSO）。
 

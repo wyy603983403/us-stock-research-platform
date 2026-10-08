@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 LOG=logs/submit_$(date +%Y%m%d).log
 exec > >(tee -a "$LOG") 2>&1
 echo "== $(date '+%F %T %Z') 提交检查"
-LATEST=$(ls -1 orders/live/vt_plus_defensive/*.json 2>/dev/null | grep -v rejected | tail -n 1)
+STUDY=$(.venv/bin/python -c "import yaml;print(yaml.safe_load(open('configs/operating.yml'))['study'])")
+LATEST=$(ls -1 orders/live/$STUDY/*.json 2>/dev/null | grep -v rejected | tail -n 1)
 [ -n "$LATEST" ] || { echo "没有实盘清单"; exit 0; }
 OUT=$(.venv/bin/usr-schwab submit --intent "$LATEST" 2>&1 | tail -n 1)
 echo "$OUT"

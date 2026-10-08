@@ -3,5 +3,5 @@
 # enabled 只能由用户决定。原定阶段 1（连续 3 个月复核）通过后再开；
 # 用户 2026-10-07 决定提前打开，与订单演练、小额实盘并行（见 configs/stage_gates.yml）。
 enabled: true
-study: vt_plus_defensive
-holdings: portfolio/paper/vt_plus_defensive.yml
+study: vt_only                                  # 与 configs/operating.yml 一致（2026-10-08 起）
+holdings: portfolio/paper/vt_only.yml

@@ -1,0 +1,40 @@
+# 运行配置（不是新研究，不计入试验登记）：只运行进攻部分，即已批准的 sp500_trend_voltarget（2026-10-03 批准）。
+# 用户 2026-10-08 决定：以它取代 vt_plus_defensive（50/50）作为模拟盘与实盘运行的策略。
+# 为复用已验证的出单（usr-mix-intent）与独立复核（usr-verify-intent）流程，写成 aggressive_weight = 1.0 的 sleeve_mix：
+# 防守部分权重为 0，不产生任何持仓或交易信号；结果等同单独运行 sp500_trend_voltarget（SPY / SSO / BIL 实现）。
+schema_version: 1
+kind: sleeve_mix
+name: vt_only
+status: promoted
+operating_config_only: true
+registered_at: 2026-10-08
+question: 运行配置：100% sp500_trend_voltarget（SPY/SSO/BIL），无防守部分
+data:
+  aggressive_sleeve: research/sp500-trend-voltarget/study.yml
+  defensive_assets: [TLT, IEF, GLD]       # 权重为 0；保留只因流程要求，不交易
+  cash_rate: DTB3
+  start: 2005-10-01
+  end: 2025-12-31
+rule:
+  aggressive_weight: 1.0
+  defensive_weight: 0.0
+  rebalance: 每个自然月最后一个交易日把进攻部分恢复到模型目标敞口（与 vt_plus_defensive 的实现相同）
+  sma_days: 200
+  execution_lag_days: 1
+  trading_cost_bps: 10
+benchmark:
+  primary: 标普 500 全收益
+inference:
+  frequency: calendar_month
+  method: none                            # 运行配置，不做检验；证据见 docs/results/sp500-trend-voltarget.md
+risk:
+  max_worst_12m_loss: 0.50
+human_review:
+  approved: true
+  reviewer: 用户
+  reviewed_at: 2026-10-08
+  scope: 模拟盘（Alpaca）与实盘（嘉信手动，首批 ≤ configs/live.yml 上限）
+  notes: >
+    用户在知情的情况下选择只跑进攻部分以提高预期收益：2005–2025 年化 10.6%、最大回撤 −26.8%（组合 7.8%、−16.8%）；
+    1955–2025 年化 12.0%、最差 12 个月 −40.1%（在 50% 上限内）；主检验（相对持有标普的超额）未通过，2026-10-03 人工批准；
+    当前估值处于历史高位（CAPE 约 41）。单一资产（标普 500）名义敞口最高 200%（2026-10-03 已批准）。
