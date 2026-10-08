@@ -66,6 +66,14 @@ if [ -f portfolio/live/schwab.yml ] && [ -n "$LIVE_START" ] && [[ ! "$LASTDAY" <
   LIVE_ST=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings portfolio/live/schwab.yml \
     --output artifacts/live/status.md --orders-dir orders/live 2>&1 | head -n 1)
 fi
+# 个股板块（用户自己挑、手动下单）：每日估值与提醒；每周五信号日生成一次候选清单
+STK_OUT=$(.venv/bin/usr-stocks monitor 2>&1 | tail -n 1)
+echo "$STK_OUT"
+STK_SCREEN=""
+if [ "$(date -d "$LASTDAY" +%u)" = "5" ] && [ ! -f "artifacts/stocks/screen_$LASTDAY.md" ]; then
+  STK_SCREEN=$(.venv/bin/usr-stocks screen --day "$LASTDAY" 2>&1 | tail -n 1)
+  echo "$STK_SCREEN"
+fi
 ST_OUT=$(.venv/bin/usr-status --contract $CONTRACT --model-start $MODEL_START --holdings "$LEDGER" \
   --update-report "artifacts/update_$STAMP.json" 2>&1); ST_RC=$?
 echo "$ST_OUT"
@@ -83,6 +91,10 @@ case "$LIVE_VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 实盘清单
 $NOTE";; esac
 [ -n "$LIVE_ST" ] && NOTE="${NOTE:+$NOTE
 }实盘账户：$LIVE_ST"
+case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
+}【个股】$STK_OUT";; esac
+[ -n "$STK_SCREEN" ] && NOTE="${NOTE:+$NOTE
+}【个股】$STK_SCREEN（bash scripts/stocks.sh screen 查看）"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE
 }$(echo "$ST_OUT" | grep '需要关注')"
 # 每个交易日都发一条简报（只发一次：第二次运行仅在有异常时发）

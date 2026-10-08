@@ -1,0 +1,22 @@
+# 个股板块（用户 2026-10-08 决定）：系统每周按规则筛候选清单，用户从中挑选、在嘉信 App 手动下单；
+# 用另外的钱单独记账，不占 configs/live.yml 的策略资金。风控只提醒、不强制、不下单。
+# 注意：筛选规则未经验证有超额收益——本项目 2026-10-01 的时点成分股研究中，同类动量规则
+# （sp500_momentum_pit_v2）2012–2025 年化 14.0%、SPY 14.5%，相对等权无显著超额。清单只是“值得看一看”的起点。
+ledger: portfolio/stocks/ledger.yml
+fills: portfolio/stocks/fills.csv
+benchmark: SPY
+
+alerts:                          # 用户 2026-10-08 选择
+  max_position_share: 0.25       # 单只市值 > 板块净值 25% 时提醒（买前检查也用这个数）
+  drop_from_cost: 0.20           # 现价比平均成本低 20% 及以上时提醒
+  section_drawdown: 0.30         # 板块净值比历史最高低 30% 及以上时提醒
+
+screen:                          # 每周一次（周五信号日的那次运行），结果在 artifacts/stocks/screen_<日期>.md
+  universe: sp500_current        # 当前标普 500 成分股（datasets/s-and-p-500-companies）
+  lookback_days: 252             # 动量：过去 252 个交易日涨幅，剔除最近 21 天（12-1 动量）
+  skip_days: 21
+  trend_sma_days: 200            # 只列收盘价在 200 日均线上方的股票
+  vol_days: 60                   # 60 日年化波动率；剔除全池波动率最高的 10%
+  drop_top_vol_share: 0.10
+  top_n: 20
+  max_per_sector: 5              # 同一行业最多列 5 只，避免清单全是一个行业

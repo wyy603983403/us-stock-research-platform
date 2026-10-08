@@ -2626,3 +2626,91 @@ def test_factor_sleeve_mix_matches_independent_and_two_sleeve_case() -> None:
     yearly = [(1 + gross[m]) / (1 + factor[m]) - 1 for m in gross]
     assert 0.004 < sum(yearly) / len(yearly) * 12 < 0.006
     assert fs.full_months(date(2013, 7, 18), date(2005, 1, 1), end)[0] == date(2013, 8, 1)
+
+
+def test_stocks_ledger_checks_and_alerts(tmp_path: Path) -> None:
+    from us_stock_research.trading import stocks as st
+
+    path = tmp_path / "stocks.yml"
+    limits = {"max_position_share": 0.25, "drop_from_cost": 0.20, "section_drawdown": 0.30}
+    led = st.init(path, 10_000.0, date(2026, 10, 8))
+    with pytest.raises(ValueError):
+        st.init(path, 1.0, date(2026, 10, 8))
+    # plan: 30 x $100 = 30% of the section -> warning with the room left (25 shares)
+    chk = st.check_trade(led, {}, symbol="AAA", side="BUY", qty=30, price=100.0, limits=limits)
+    assert chk["weight_after"] == pytest.approx(0.30) and "最多再买约 25 股" in chk["warnings"][0]
+    ok = st.check_trade(led, {}, symbol="AAA", side="BUY", qty=20, price=100.0, limits=limits)
+    assert ok["warnings"] == [] and ok["blocking"] == []
+    assert st.check_trade(led, {}, symbol="AAA", side="SELL", qty=1, price=100.0,
+                          limits=limits)["blocking"]  # fmt: skip
+    st.record(led, day=date(2026, 10, 9), symbol="AAA", side="BUY", qty=20, price=100.0, fee=1.0)
+    st.record(led, day=date(2026, 10, 9), symbol="BBB", side="BUY", qty=10, price=50.0)
+    assert led["cash_usd"] == pytest.approx(10_000 - 2001 - 500)
+    realized = st.record(led, day=date(2026, 10, 12), symbol="AAA", side="SELL", qty=5,
+                         price=120.0, fee=1.0)  # fmt: skip
+    assert realized == pytest.approx(5 * 120 - 1 - 2001 * 5 / 20)
+    assert led["positions"]["AAA"]["qty"] == 15
+    st.save(path, led)
+    led = st.load(path)
+    # AAA down 25% from cost, BBB up a lot -> drop alert; BBB weight above 25%
+    v = st.valuation(led, {"AAA": 75.0, "BBB": 400.0})
+    notes = st.alerts(led, v, limits)
+    assert any("AAA 比成本跌" in n for n in notes) and any("BBB 占板块" in n for n in notes)
+    st.split(led, "BBB", 2)
+    v2 = st.valuation(led, {"AAA": 75.0, "BBB": 200.0})
+    assert v2["nav"] == pytest.approx(v["nav"])
+    led["peak_nav_usd"] = v["nav"] / 0.6
+    assert any("板块净值比最高点低" in n for n in st.alerts(led, v, limits))
+    assert "个股板块：净值" in st.summary_line(led, v, notes, 0.05)
+    assert "| AAA |" in st.render_status(led, v, notes, 0.05, date(2026, 10, 12))
+
+
+def test_stocks_screen_rules() -> None:
+    from us_stock_research.trading import stocks as st
+
+    cfg = {"lookback_days": 252, "skip_days": 21, "trend_sma_days": 200, "vol_days": 60,
+           "drop_top_vol_share": 0.10, "top_n": 3, "max_per_sector": 2}  # fmt: skip
+
+    def path(growth: float, wiggle: float, n: int = 300) -> list[float]:
+        return [100 * (1 + growth) ** i * (1 + wiggle * (-1) ** i) for i in range(n)]
+
+    series = {
+        "UP1": path(0.003, 0.001), "UP2": path(0.002, 0.001), "UP3": path(0.0025, 0.001),
+        "DOWN": path(-0.001, 0.001), "WILD": path(0.004, 0.05), "SHORT": path(0.01, 0.0, 100),
+        **{f"F{i}": path(0.0001 * i, 0.002) for i in range(1, 10)},
+    }  # fmt: skip
+    meta = {s: (s.lower(), "Tech" if s.startswith("UP") else "Other") for s in series}
+    res = st.screen(series, meta, cfg, held={"UP2"})
+    syms = [r["symbol"] for r in res["candidates"]]
+    assert "SHORT" not in syms and "DOWN" not in syms and "WILD" not in syms  # history/trend/vol
+    assert syms[:2] == ["UP1", "UP3"] and "UP2" not in syms  # sector cap 2 keeps the top two
+    assert res["eligible"] == len(series) - 1
+    m = st.screen_metrics(series["UP1"], cfg)
+    assert m is not None and m["momentum_12_1"] == pytest.approx(
+        series["UP1"][-22] / series["UP1"][-253] - 1
+    )
+    md = st.render_screen(res, date(2026, 10, 9), m)
+    assert "不是买入建议" in md and "| 1 | UP1 |" in md
+
+
+def test_alpaca_fetch_many_pages_and_symbols() -> None:
+    import httpx
+
+    from us_stock_research.collectors.alpaca_daily import fetch_many
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.url.params))
+        if request.url.params.get("feed") == "sip":
+            return httpx.Response(403, json={})
+        bar = {"t": "2026-10-07T04:00:00Z", "o": 1, "h": 1, "l": 1, "c": 2.5, "v": 9}
+        if "page_token" not in request.url.params:
+            return httpx.Response(200, json={"bars": {"BRK.B": [bar]}, "next_page_token": "x"})
+        bar2 = dict(bar, t="2026-10-08T04:00:00Z", c=3.0)
+        return httpx.Response(200, json={"bars": {"BRK.B": [bar2], "AAPL": [bar]}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    out = fetch_many(client, ["BRK-B", "AAPL"], date(2026, 10, 1), date(2026, 10, 8), "k", "s")
+    assert [b.close for b in out["BRK-B"]] == [2.5, 3.0] and len(out["AAPL"]) == 1
+    assert calls[0]["symbols"] == "BRK.B,AAPL" and calls[-1]["feed"] == "iex"

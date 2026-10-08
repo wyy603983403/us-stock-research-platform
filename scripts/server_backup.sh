@@ -30,6 +30,7 @@ rm -rf state/orders state/portfolio
 cp -a "$STATE/orders" state/orders
 cp -a "$STATE/portfolio" state/portfolio
 for f in status.json status.md; do [ -f "$STATE/artifacts/$f" ] && cp "$STATE/artifacts/$f" state/artifacts/; done
+if [ -d "$STATE/artifacts/stocks" ]; then mkdir -p state/artifacts/stocks; cp "$STATE/artifacts/stocks/"*.md "$STATE/artifacts/stocks/"*.json state/artifacts/stocks/ 2>/dev/null; fi
 if [ -d "$STATE/artifacts/live" ]; then mkdir -p state/artifacts/live; cp "$STATE/artifacts/live/status."* state/artifacts/live/ 2>/dev/null; fi
 find "$STATE/logs" -name 'daily_*.log' -mtime -30 -exec cp {} state/logs/ \; 2>/dev/null
 find state/logs -name 'daily_*.log' -mtime +30 -delete 2>/dev/null
