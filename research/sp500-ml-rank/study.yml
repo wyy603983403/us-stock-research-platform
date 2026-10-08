@@ -1,0 +1,131 @@
+# 预先登记（2026-10-08，在计算任何特征值、训练任何模型或计算任何收益之前写定）。改参数 = 新版本研究。
+# 背景：用户 2026-10-08 希望个股推荐综合技术面、资金面、基本面，并加入机器学习。此前 4 项单一信号研究
+# （动量、低波动、质量+价值、内部人买入）均未跑赢同池等权。文献（Gu, Kelly & Xiu 2020, RFS）显示树模型/神经网络
+# 合成大量特征在美国大盘股中也有样本外预测力，最重要的是价格趋势、流动性、波动与风险类变量。
+# 本研究检验：在同样的时点成分股、成本与执行假设下，梯度提升树对多维特征的月度排名能否选出跑赢等权的组合，
+# 并且优于不用机器学习、按文献方向等权合成同一组特征的打分。
+# 只看输入的检查（特征覆盖率、样本量）允许在运行前做；看到任何收益之前可修订一次并记入 amendments。
+schema_version: 1
+kind: cross_section
+name: sp500_ml_rank
+status: registered
+registered_at: 2026-10-08
+question: >
+  在标普 500 时点成分股中，每月末用约 25 个技术面、资金面、基本面特征，以按年滚动训练的梯度提升树（LightGBM）
+  预测下月收益的截面排名，买入排名前 30 只、等权、每月调仓；2015–2025 年扣除成本后能否跑赢同池等权组合，
+  且优于同一组特征的等权线性打分？
+hypothesis: >
+  多个弱信号的非线性合成比任何单一信号稳健（Gu, Kelly, Xiu 2020；Qlib 的 Alpha 因子做法）。
+  主检验：机器学习前 30 只相对同池等权组合的月均超额收益，95% 置信区间下限 > 0。
+universe:
+  membership: meta/sp500_history
+  prices: [daily, daily_delisted]
+  start: 2015-01-01                       # 检验期第一个信号月（此前 2012–2014 只用于训练）
+  end: 2025-12-31
+  min_history_days: 253
+signal:
+  name: ml_rank
+ml:
+  train_start: 2012-01-01                 # 训练样本最早的信号月（价格覆盖率首次 ≥90% 的年份）
+  retrain: 每年第一个信号日（1 月最后一个交易日）重新训练；当年其余月份用同一模型
+  training_rows: >
+    信号月 m、股票 s 的一行 = m 月末的特征 + 标签；只用“持有期结束日 ≤ 重训信号日”的信号月
+    （即标签在重训时已经完全可知），起点 train_start，扩展窗口
+  label: 下一个持有期（信号日后 1 个交易日买入，到下一个信号日后 1 个交易日）的收益，在当月合格股票中取百分位 (名次-1)/(n-1)
+  feature_transform: 每个特征每月在合格股票中取百分位 (名次-1)/(n-1)；缺失保持缺失（模型原生处理）
+  model: lightgbm.LGBMRegressor
+  params: {objective: regression, n_estimators: 300, learning_rate: 0.05, num_leaves: 15,
+           min_child_samples: 200, subsample: 0.8, subsample_freq: 1, colsample_bytree: 0.8,
+           reg_lambda: 1.0, random_state: 20261008, n_jobs: 1, deterministic: true,
+           force_row_wise: true, verbose: -1}
+  min_training_rows: 5000
+  prediction: 当月合格股票的预测值降序，同分按代码排序
+features:                                  # 方向（+ 越高越好，− 越低越好）只用于线性对照打分；模型不使用方向
+  # 技术面（复权收盘价 adj_close；信号日 t，交易日计数；价格可沿用最多 5 个交易日前的值）
+  technical:
+    mom_12_1: {def: "P[t-21]/P[t-252]-1", dir: +}              # Jegadeesh-Titman 1993
+    mom_6_1: {def: "P[t-21]/P[t-126]-1", dir: +}
+    rev_1m: {def: "P[t]/P[t-21]-1", dir: -}                    # 短期反转（Jegadeesh 1990）
+    rev_1w: {def: "P[t]/P[t-5]-1", dir: -}
+    vol_60: {def: "过去 60 个日收益的标准差", dir: -}            # 低波动（Ang 等 2006）
+    beta_252: {def: "过去 252 日日收益对 SPY 日收益的回归斜率（至少 200 个共同观测）", dir: -}  # Frazzini-Pedersen 2014
+    idio_vol_60: {def: "过去 60 日对 SPY 回归残差的标准差", dir: -}
+    max_ret_21: {def: "过去 21 个日收益的最大值", dir: -}        # Bali, Cakici, Whitelaw 2011
+    dist_sma_200: {def: "P[t]/(过去 200 个收盘价均值)-1", dir: +}
+    dist_high_252: {def: "P[t]/(过去 252 个收盘价最大值)-1", dir: +}  # George-Hwang 2004
+    industry_mom: {def: "同一 SIC 两位码行业内合格股票 mom_12_1 的均值（行业少于 3 只时缺失）", dir: +}  # Moskowitz-Grinblatt 1999
+  # 资金面（成交额 = 收盘价 close × 成交量 volume：雅虎两者均为拆股调整口径，Tiingo 两者均为原始口径，乘积一致）
+  flows:
+    dollar_vol_60: {def: "过去 60 日日均成交额的对数", dir: -}
+    volume_surge: {def: "过去 21 日日均成交额 / 过去 252 日日均成交额", dir: +}   # Gervais, Kaniel, Mingelgrin 2001
+    amihud_60: {def: "过去 60 日 |日收益|/成交额 的均值（×1e9）", dir: +}           # Amihud 2002
+    insider_buyers_182: {def: "过去 182 天（按申报日）公开市场买入（代码 P）的不同董事/高管人数", dir: +}
+    insider_sellers_182: {def: "过去 182 天（按申报日）公开市场卖出（代码 S）的不同董事/高管人数", dir: -}
+  # 基本面（与 sp500_quality_value_pit 相同的 SEC company facts 时点年报规则：只用信号日或之前提交的年报，期末距信号日 ≤550 天）
+  fundamental:
+    log_market_value: {def: "与 sp500_quality_value_pit 相同口径的市值取对数", dir: -}
+    roa: {def: "净利润/总资产（总资产 ≤0 缺失）", dir: +}
+    cfoa: {def: "经营现金流/总资产", dir: +}
+    accruals: {def: "(净利润 − 经营现金流)/总资产", dir: -}    # Sloan 1996
+    earnings_yield: {def: "净利润/市值（市值 ≤0 缺失）", dir: +}
+    book_to_market: {def: "净资产/市值（净资产 ≤0 缺失）", dir: +}
+    cash_flow_yield: {def: "经营现金流/市值", dir: +}
+fundamentals:                              # 与 sp500_quality_value_pit 完全相同（含其 2026-10-01 修订后的标签）
+  source: sec_companyfacts
+  statements: annual
+  known_by: filed <= signal_day
+  max_age_days: 550
+  net_income: [NetIncomeLoss, ProfitLoss, NetIncomeLossAvailableToCommonStockholdersBasic]
+  operating_cash_flow: [NetCashProvidedByUsedInOperatingActivities, NetCashProvidedByUsedInOperatingActivitiesContinuingOperations]
+  assets: [Assets]
+  equity: [StockholdersEquity, StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest]
+  shares: [WeightedAverageNumberOfDilutedSharesOutstanding, WeightedAverageNumberOfSharesOutstandingBasic, EntityCommonStockSharesOutstanding, CommonStockSharesOutstanding]
+insider:
+  window_days: 182
+  relationship: 董事或高管（只是 10% 大股东的不计）
+eligibility: >
+  当月有价格、满 min_history_days 的成员；至少有 mom_12_1、vol_60、dollar_vol_60 三个特征。金融股不剔除
+  （基本面特征对其可能失真，由模型自行处理；线性对照同样包含）。
+selection:
+  top_n: 30
+  weighting: equal
+rebalance: monthly
+execution_lag_days: 1
+transaction_cost_bps: 10
+delisting:
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe          # 同一合格股票池的等权组合
+  linear_composite: >
+    同一组特征按 dir 取向后的百分位，组内（技术/资金/基本面）等权平均、三组再等权平均（组内全缺失的组不计），
+    前 30 只等权，同样成本
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261008
+risk:
+  max_worst_12m_loss: 0.50                # 用户 2026-10-01 设定的风险上限
+success_criteria:
+  - 机器学习前 30 只相对等权股票池的月均超额收益，95% 置信区间下限 > 0（主检验）
+  - 机器学习前 30 只相对线性对照前 30 只的月均超额收益为正（点估计；同时报告区间）
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验，本研究为第 14 项）
+  - 最差滚动 12 个月亏损不超过 50%
+  - 价格覆盖率每个调仓日 ≥ 90%；合格股票中至少有 1 个基本面特征者占比每个调仓日 ≥ 85%
+  - 独立第二实现：特征逐月逐股一致（相对误差 ≤1e-9），用同一模型预测时持仓逐月一致
+reporting:                                 # 只报告，不参与晋级
+  - 每年的信息系数（预测与实际下月收益的秩相关）均值与 t 值
+  - 特征重要性（按年模型的 gain 均值）；三组特征分别单独训练的模型的超额收益
+  - 2015–2019 与 2020–2025 两段
+  - 退市 −30% 折价敏感性；单边月换手
+  - Fama-French 五因子 + 动量归因
+limitations:
+  - 只有约 11 年检验期（132 个月）、约 500 只大盘股；Gu-Kelly-Xiu 的月度 R² 约 0.5%，预测力本来就弱
+  - 资金面只用到成交额与内部人申报；机构持仓（13F）、卖空、期权、分析师预期等未纳入（免费数据不足）
+  - 超参数为常用值，未在本数据上调优；若失败，换模型或调参都属于新研究、计入试验数
+  - 方向（dir）只用于线性对照；部分方向在大盘股中文献证据较弱
+  - 价格来源与此前时点研究相同（雅虎 + Tiingo 前成分股），2015 年后覆盖率 ≥90%
+human_review:
+  approved: false
