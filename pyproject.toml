@@ -18,6 +18,7 @@ dev = ["mypy>=1.10", "pytest>=8", "ruff>=0.5", "types-PyYAML>=6", "duckdb>=1.1,<
 verify = ["pandas>=2"]
 report = ["quantstats>=0.0.62", "pandas>=2"]
 storage = ["duckdb>=1.1,<2"]
+ml = ["numpy>=1.24", "lightgbm>=4"]
 
 [project.scripts]
 usr-collect-daily = "us_stock_research.collectors.yahoo_daily:main"
@@ -41,6 +42,9 @@ usr-sleeve-mix = "us_stock_research.research.sleeve_mix:main"
 usr-factor-sleeve = "us_stock_research.research.factor_sleeve:main"
 usr-stocks = "us_stock_research.trading.stocks:main"
 usr-schwab = "us_stock_research.trading.schwab_api:main"
+usr-ml-panel = "us_stock_research.research.ml_features:main"
+usr-ml-rank = "us_stock_research.research.ml_rank:main"
+usr-verify-ml = "us_stock_research.research.verify_ml:main"
 usr-trend-ensemble = "us_stock_research.research.trend_ensemble:main"
 usr-xsec = "us_stock_research.research.cross_section:main"
 usr-build-identity = "us_stock_research.research.identity:main"

@@ -88,3 +88,8 @@
     usr-stocks + scripts/stocks.sh；Alpaca 多代码日线（fetch_many）。
 44. 用户 2026-10-08：申请嘉信 Trader API。usr-schwab（授权/7 天续期提醒/只读对账/自动记成交/下单闸门）+ scripts/schwab.sh、
     server_submit.sh、server_schwab_setup.sh；configs/schwab_api.yml read_enabled、orders_enabled 均为 false，04 风控门禁检查后者保持 false。
+45. 用户 2026-10-08 要求个股推荐综合技术面、资金面、基本面并加入机器学习（之后又要求加入宏观）。预先登记 sp500_ml_rank（526f7c4），
+    修订两次（ce4de63 宏观；da2909f BAA10Y 替代只有 3 年历史的 ICE BofA 利差），均在任何收益之前。
+    usr-ml-panel（特征面板，需价格库）/ usr-ml-rank（LightGBM 滚动训练与组合，需 '.[ml]'）/ usr-verify-ml（独立重算 + 引擎重放）。
+    在工作区用 Mac 数据库副本运行（VM 单次命令 180 秒限制）。未通过：超额区间（−0.23%，+1.01%）/月，DSR 0.945；试验登记 14 组。
+

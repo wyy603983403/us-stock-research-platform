@@ -2927,3 +2927,51 @@ def test_schwab_submission_gates_and_order_flow(tmp_path: Path) -> None:
     assert fake.placed[1][2] == 14  # cash $1000 / 70.27 -> 14 shares, not 20
     assert rows[1]["shares_sent"] == 14
     assert sw.limit_order("SSO", "BUY", 14, 70.27)["price"] == "70.27"
+
+
+def test_ml_rank_pieces() -> None:
+    import math
+    import random
+
+    import numpy as np
+
+    from us_stock_research.research import ml_features as mf
+    from us_stock_research.research import ml_rank as mr
+    from us_stock_research.research import verify_ml as vm
+
+    rng = random.Random(5)
+    x = [[rng.gauss(0, 1) for _ in range(5)] for _ in range(260)]
+    y = [0.3 + 1.5 * a[0] - 0.7 * a[1] + 0.2 * a[4] + rng.gauss(0, 0.1) for a in x]
+    ours = vm.regress(y, x)
+    ref = mf.ols_coefs(np.array(y), np.array(x))
+    assert ref is not None and max(abs(a - b) for a, b in zip(ours, ref, strict=True)) < 1e-9
+    assert mf.ols_coefs(np.array(y[:150]), np.array(x[:150])) is None  # < 200 rows
+    rows = [{"symbol": s, "ret": r, "f": {"mom_12_1": m, "vol_60": v}}
+            for s, r, m, v in (("A", 0.05, 0.3, 0.01), ("B", -0.02, 0.1, 0.03),
+                               ("C", 0.01, None, 0.02))]  # fmt: skip
+    sc = mr.linear_scores(rows, {"technical": {"mom_12_1": "+", "vol_60": "-"}})
+    assert sc["A"] == pytest.approx(1.0) and sc["B"] == pytest.approx(0.0)
+    assert sc["C"] == pytest.approx(0.5)  # only vol_60, middle rank
+    assert mr.label(rows) == [1.0, 0.0, 0.5]
+    month = {"market_state": {"vix": 20.0}}
+    mat = mr.design(rows, month, ("mom_12_1",), ("vix",))
+    assert mat[0] == [1.0, 20.0] and math.isnan(mat[2][0])
+    test = [{"date": "2020-01-31", "spy": 0.01, "priced": 9, "members": 10, "eligible": 3,
+             "with_fundamentals": 3},
+            {"date": "2020-02-28", "spy": 0.0, "priced": 10, "members": 10, "eligible": 3,
+             "with_fundamentals": 3}]  # fmt: skip
+    panel = {"2020-01-31": rows, "2020-02-28": rows}
+    scores = {
+        "2020-01-31": {"A": 2.0, "B": 1.0, "C": 0.0},
+        "2020-02-28": {"A": 0.0, "B": 2.0, "C": 1.0},
+    }
+    out = mr.portfolio(test, panel, scores, 2, 10.0)
+    assert out[0]["picks"] == ["A", "B"]
+    assert out[0]["strategy"] == pytest.approx(0.5 * 0.05 + 0.5 * -0.02 - 10e-4)
+    held = {
+        "A": 0.5 * 1.05 / (0.5 * 1.05 + 0.5 * 0.98),
+        "B": 0.5 * 0.98 / (0.5 * 1.05 + 0.5 * 0.98),
+    }
+    traded = abs(held["A"] - 0) + abs(held["B"] - 0.5) + 0.5
+    assert out[1]["strategy"] == pytest.approx(0.5 * -0.02 + 0.5 * 0.01 - traded * 1e-3)
+    assert out[0]["coverage"] == pytest.approx(0.9)
