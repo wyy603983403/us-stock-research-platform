@@ -11,7 +11,7 @@ name: sp500_ml_rank
 status: registered
 registered_at: 2026-10-08
 question: >
-  在标普 500 时点成分股中，每月末用约 25 个技术面、资金面、基本面特征，以按年滚动训练的梯度提升树（LightGBM）
+  在标普 500 时点成分股中，每月末用约 30 个技术面、资金面、基本面与宏观特征，以按年滚动训练的梯度提升树（LightGBM）
   预测下月收益的截面排名，买入排名前 30 只、等权、每月调仓；2015–2025 年扣除成本后能否跑赢同池等权组合，
   且优于同一组特征的等权线性打分？
 hypothesis: >
@@ -32,7 +32,9 @@ ml:
     信号月 m、股票 s 的一行 = m 月末的特征 + 标签；只用“持有期结束日 ≤ 重训信号日”的信号月
     （即标签在重训时已经完全可知），起点 train_start，扩展窗口
   label: 下一个持有期（信号日后 1 个交易日买入，到下一个信号日后 1 个交易日）的收益，在当月合格股票中取百分位 (名次-1)/(n-1)
-  feature_transform: 每个特征每月在合格股票中取百分位 (名次-1)/(n-1)；缺失保持缺失（模型原生处理）
+  feature_transform: >
+    每个股票层面特征每月在合格股票中取百分位 (名次-1)/(n-1)；缺失保持缺失（模型原生处理）。
+    市场环境特征（features.macro.market_state）对当月所有股票取同一个原始值，不做百分位
   model: lightgbm.LGBMRegressor
   params: {objective: regression, n_estimators: 300, learning_rate: 0.05, num_leaves: 15,
            min_child_samples: 200, subsample: 0.8, subsample_freq: 1, colsample_bytree: 0.8,
@@ -70,6 +72,24 @@ features:                                  # 方向（+ 越高越好，− 越�
     earnings_yield: {def: "净利润/市值（市值 ≤0 缺失）", dir: +}
     book_to_market: {def: "净资产/市值（净资产 ≤0 缺失）", dir: +}
     cash_flow_yield: {def: "经营现金流/市值", dir: +}
+  # 宏观（2026-10-08 修订加入，见 amendments；只给机器学习用，线性对照不含——没有公认方向）
+  # 只用每日由市场交易决定、事后不修订的 FRED 序列；按日期对齐到交易日（缺值沿用前值），
+  # 一律只用信号日前一个交易日及之前的值（FRED 当日值通常次日才发布）
+  macro:
+    sensitivity:                           # 股票层面：过去 252 个交易日（截至信号日前一日，至少 200 个完整观测）
+      regression: >                        # 日收益对下列 5 个日变化做多元 OLS，取后 4 个系数（已控制大盘）
+        r_stock = a + b0·r_SPY + b1·ΔDGS10 + b2·r_DTWEXBGS + b3·r_DCOILWTICO + b4·ΔBAMLH0A0HYM2
+        （Δ 为百分点差；r 为日变动率；油价当日或前一日 ≤0 的观测剔除）
+      beta_rate: {def: "b1：对 10 年期美债收益率变化的敏感度", dir: none}
+      beta_dollar: {def: "b2：对美元指数（广义）变动的敏感度", dir: none}
+      beta_oil: {def: "b3：对 WTI 油价变动的敏感度", dir: none}
+      beta_credit: {def: "b4：对高收益债利差变化的敏感度", dir: none}
+    market_state:                          # 当月所有股票同一个值（原始值，不做百分位）
+      vix: {def: "VIXCLS 水平", dir: none}
+      curve_10y2y: {def: "T10Y2Y 水平", dir: none}
+      hy_spread: {def: "BAMLH0A0HYM2 水平", dir: none}
+      rate_chg_63: {def: "DGS10 过去 63 个交易日的变化（百分点）", dir: none}
+      market_mom_252: {def: "SPY 复权价过去 252 个交易日涨幅（截至信号日）", dir: none}
 fundamentals:                              # 与 sp500_quality_value_pit 完全相同（含其 2026-10-01 修订后的标签）
   source: sec_companyfacts
   statements: annual
@@ -117,6 +137,7 @@ success_criteria:
   - 独立第二实现：特征逐月逐股一致（相对误差 ≤1e-9），用同一模型预测时持仓逐月一致
 reporting:                                 # 只报告，不参与晋级
   - 每年的信息系数（预测与实际下月收益的秩相关）均值与 t 值
+  - 不含宏观特征的机器学习版本（其余完全相同）的超额收益，用来区分“机器学习”与“宏观信息”的贡献
   - 特征重要性（按年模型的 gain 均值）；三组特征分别单独训练的模型的超额收益
   - 2015–2019 与 2020–2025 两段
   - 退市 −30% 折价敏感性；单边月换手
@@ -127,5 +148,14 @@ limitations:
   - 超参数为常用值，未在本数据上调优；若失败，换模型或调参都属于新研究、计入试验数
   - 方向（dir）只用于线性对照；部分方向在大盘股中文献证据较弱
   - 价格来源与此前时点研究相同（雅虎 + Tiingo 前成分股），2015 年后覆盖率 ≥90%
+amendments:
+  - date: 2026-10-08
+    before_any_return: true
+    before_any_feature_value: true
+    change: 加入 features.macro（4 个股票层面宏观敏感度 + 5 个市场环境变量，只给机器学习用）；问题表述改为约 30 个特征
+    reason: >
+      用户在登记后、任何特征或收益计算之前提出基本面应包含宏观因素（2026-10-08）。宏观变量对同月所有股票相同，
+      不能单独排序，因此以“股票对宏观的敏感度”和“市场环境 × 股票特征的交互（由树模型学习）”两种方式加入。
+      线性对照、主检验、门槛均不变；另报告不含宏观的机器学习版本。
 human_review:
   approved: false
