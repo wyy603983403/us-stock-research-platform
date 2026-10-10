@@ -404,6 +404,9 @@ def _last_session() -> date:
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one small CLI
+    from us_stock_research.config import load_dotenv
+
+    load_dotenv()  # Alpaca keys live in the server's .env
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
