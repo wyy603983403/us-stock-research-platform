@@ -7,7 +7,7 @@
 schema_version: 1
 kind: small_factor
 name: small_factor_sleeve
-status: registered
+status: registered            # 已运行，未通过主检验（2026-10-10，见 docs/results/small-factor-sleeve.md）
 registered_at: 2026-10-10
 question: >
   “小盘动量 + 小盘高盈利”各半（French SMALL HiPRIOR、SMALL HiOP，日度、市值加权，每月末恢复各半，每年扣 1.0% 实施摩擦）
