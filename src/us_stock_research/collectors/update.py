@@ -105,12 +105,12 @@ def _use_alt(
         return
     last = existing[-1]
     try:
-        if symbol in failed:
+        if symbol in failed or last.day < today:  # Yahoo failed, or has not published today yet
             new = [b for b in alt(symbol, last.day + timedelta(days=1), today) if b.day > last.day]
             if new and execute:
                 store.write_bars(symbol, existing + new)
             fallback[symbol] = len(new)
-            if new and new[-1].day == today:
+            if new and new[-1].day == today and symbol in failed:
                 del failed[symbol]  # reported under "fallback" instead
             if new:
                 results.append({"symbol": symbol, "action": "append_backup", "reason": "alpaca",
@@ -203,7 +203,11 @@ def run_update(
         "backup_errors": alt_errors,
         "retry_wait_seconds": waited,
         # the source did not deliver the latest session (throttling, stale cache, halted stock)
-        "behind": sorted(r["symbol"] for r in results if r["last"] < today.isoformat()),
+        "behind": sorted(
+            s
+            for s in {r["symbol"] for r in results}
+            if max(r["last"] for r in results if r["symbol"] == s) < today.isoformat()
+        ),
         "symbols": len(symbols),
     }
 

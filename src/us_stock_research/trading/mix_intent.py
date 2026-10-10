@@ -326,6 +326,14 @@ def main(argv: list[str] | None = None) -> int:
     holdings = load_holdings(args.holdings, args.capital)
     symbols = {"SPY", "SSO", "BIL", *contract["data"]["defensive_assets"], *holdings.positions}
     bars = {s: store.read_bars(s) for s in sorted(symbols)}
+    have = [rows[-1].day for rows in bars.values() if rows]
+    if have and min(have) < args.model_start:
+        # e.g. the source has not published the first model day yet: wait, never crash
+        print(
+            f"{args.as_of}：数据只到 {min(have)}，早于模型起点 {args.model_start}，今天不出单"
+            f"（订单 0 笔）"
+        )
+        return 0
     intent = generate(
         contract,
         vt_contract,

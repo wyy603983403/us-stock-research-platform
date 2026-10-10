@@ -78,8 +78,15 @@ class PaperClient:
             "client_order_id": client_order_id,
         }
         response = self.http.post("/v2/orders", json=body)
-        response.raise_for_status()
+        if response.status_code >= 400:  # keep Alpaca's reason (e.g. buying power, time window)
+            raise OrderRejected(
+                f"{symbol} {side} {qty}: HTTP {response.status_code} {response.text[:300]}"
+            )
         return dict(response.json())
+
+
+class OrderRejected(RuntimeError):
+    """Alpaca refused an order; the message carries its status code and reason."""
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -211,7 +218,11 @@ def main(argv: list[str] | None = None) -> int:
     if stale or not intent["orders"]:
         print(f"最新订单清单 {files[-1].name} 已过期或为空，未发送")
         return 0
-    sent, expected = submit(client, intent, holdings, now_utc=datetime.now(UTC))
+    try:
+        sent, expected = submit(client, intent, holdings, now_utc=datetime.now(UTC))
+    except (OrderRejected, httpx.HTTPError, ValueError) as exc:
+        print(f"模拟单提交被拒绝：{exc}")
+        return 2
     holdings["expected_after_fills"] = expected
     holdings["submitted_signal_days"] = sorted(
         set(holdings["submitted_signal_days"]) | {intent["signal_day"]}

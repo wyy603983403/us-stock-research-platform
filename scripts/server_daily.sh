@@ -47,7 +47,10 @@ if [ -f "orders/$STUDY/$LASTDAY.json" ] && ! grep -q "自动独立复核" "order
   esac
 fi
 STOPPED=""; [ -f portfolio/STOP_TRADING ] && STOPPED=1   # 紧急停止（手机“停止”或 scripts/control.sh stop）
-if [ "$PAPER_ON" = "True" ] && [ -z "$STOPPED" ]; then .venv/bin/usr-paper --submit 2>&1 | tail -n 12; fi
+PAPER_SUBMIT=""
+if [ "$PAPER_ON" = "True" ] && [ -z "$STOPPED" ]; then
+  PAPER_SUBMIT=$(.venv/bin/usr-paper --submit 2>&1 | tail -n 12); echo "$PAPER_SUBMIT"
+fi
 # 嘉信接口（只读，configs/schwab_api.yml read_enabled）：先把今天的成交记入账本，再对账；授权快到期时提醒
 SW_READ=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('configs/schwab_api.yml')) or {}).get('read_enabled')))" 2>/dev/null)
 SW_FILLS=""; SW_SNAP=""
@@ -110,6 +113,9 @@ case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
 }【个股】$STK_OUT";; esac
 [ -n "$STK_SCREEN" ] && NOTE="${NOTE:+$NOTE
 }【个股】$STK_SCREEN（bash scripts/stocks.sh screen 查看）"
+case "$PAPER_SUBMIT" in *被拒绝*|*Traceback*|*Error*) NOTE="⚠️ $(echo "$PAPER_SUBMIT" | grep -m1 -E '拒绝|Error')
+$NOTE";; *'"status"'*) NOTE="${NOTE:+$NOTE
+}模拟单已提交（收盘价成交）";; esac
 [ -n "$STOPPED" ] && NOTE="⛔ 紧急停止中：清单照常生成，但不发模拟单、不自动下单（恢复：Mac 上 bash scripts/control.sh resume）
 $NOTE"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE

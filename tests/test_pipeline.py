@@ -2431,6 +2431,18 @@ def test_update_alpaca_backup_and_crosscheck(tmp_path: Path) -> None:
     assert store.read_bars("DOWN")[-1].day == today and store.read_bars("DOWN")[-1].close == 10.5
     assert out["crosscheck_mismatch"] == ["OK"]
     assert abs(out["crosscheck"]["OK"]["diff"] - (10.6 / 10.5 - 1)) < 1e-12
+    # Yahoo answers but has not published today yet: the backup fills the day, nothing "behind"
+    late = CsvStore(tmp_path / "late")
+    late.write_bars("LATE", bars)
+    late.write_dividends("LATE", {})
+
+    def fetch_late(symbol: str, a: date, b: date):  # type: ignore[no-untyped-def]
+        return [x for x in bars if x.day >= a], {}
+
+    out = run_update(["LATE"], late, fetch_late, today, date(2000, 1, 1), execute=True,
+                     pause=0.0, sleep=lambda _: None, alt=alt)  # fmt: skip
+    assert out["fallback"] == {"LATE": 1} and out["behind"] == [] and out["failed"] == {}
+    assert late.read_bars("LATE")[-1].day == today
 
 
 def test_paper_stage2_rehearsal_six_etfs(tmp_path: Path) -> None:
@@ -3084,3 +3096,20 @@ def test_phone_commands_only_status_and_stop(tmp_path: Path) -> None:
     fresh = {"event": "message", "time": now - 5, "message": "你好"}
     assert cmd.handle_message(fresh, now, 0.0) == (cmd.HELP, now)
     assert cmd.handle_message(fresh, now + 3, now)[0] is None  # rate limit
+
+
+def test_paper_rejection_keeps_alpaca_reason() -> None:
+    import httpx
+
+    from us_stock_research.trading import alpaca_paper as ap
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"code": 40310000, "message": "insufficient buying power"})
+
+    client = ap.PaperClient("k", "s", transport=httpx.MockTransport(handler))
+    try:
+        client.submit_close_order("SSO", "BUY", 10, "cid")
+    except ap.OrderRejected as exc:
+        assert "403" in str(exc) and "insufficient buying power" in str(exc)
+    else:
+        raise AssertionError("expected OrderRejected")

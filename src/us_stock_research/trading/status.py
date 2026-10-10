@@ -351,7 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         syms = [args.one_x, args.risk_on, args.risk_off, *slots]
         adj = {x: {b.day: b.adj_close for b in store.read_bars(x) if b.adj_close > 0} for x in syms}
         common = sorted(set.intersection(*(set(v) for v in adj.values())))
-        path = model_path(adj, common, args.model_start, contract["rule"], mix["rule"], slots)
+        start = min(args.model_start, common[-1])  # data not yet at the model start: show today
+        path = model_path(adj, common, start, contract["rule"], mix["rule"], slots)
         from us_stock_research.trading.mix_intent import replica_index
 
         # 与实盘同样的节奏（信号次日收盘成交、无事件不调仓），只是不取整、不计成本
