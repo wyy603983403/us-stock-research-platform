@@ -4,7 +4,7 @@
 schema_version: 1
 kind: cross_section
 name: sp500_best_ideas_13f
-status: registered
+status: registered            # 已运行，未通过主检验（2026-10-10，见 docs/results/sp500-best-ideas-13f.md）
 registered_at: 2026-10-10
 question: >
   在标普 500 时点成分股中，每月末统计有多少家主动型机构把该股作为“最看好”持仓（相对同业平均权重超配最多的一只），

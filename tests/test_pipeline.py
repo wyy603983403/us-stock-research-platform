@@ -3162,3 +3162,74 @@ def test_intraday_watch_and_weekly_report(tmp_path: Path) -> None:
     assert "【模拟盘】" in text and "本周：账户 +3.02%" in text and "SPY +1.50%" in text
     assert "本周订单：2026-10-06 买 SSO 1383 股" in text and "距 200 日线 +7.7%" in text
     assert "【实盘】" not in text  # not started yet
+
+
+def test_best_ideas_scores_and_independent_sql(tmp_path: Path) -> None:
+    import random
+    from datetime import timedelta
+
+    duckdb = pytest.importorskip("duckdb")
+    from us_stock_research.research import best_ideas as bi
+    from us_stock_research.research import verify_best_ideas as vb
+    from us_stock_research.tables import TableStore
+
+    members = {f"S{i:02d}" for i in range(20)}
+    ten = {f"S{i:02d}": 1.0 for i in range(10)}
+    # two equal-weight managers + one that overweights S03 and holds S15 alone
+    m3 = {**ten, "S03": 5.0, "S15": 1.0}
+    scores, n = bi.best_idea_scores({1: ten, 2: dict(ten), 3: m3, 4: {"S01": 1.0}}, members)
+    assert n == 3  # manager 4 holds < 10 members
+    # managers 1-2: every tilt equal-ish; best = largest (w - consensus) -> stocks m3 underweights
+    assert scores["S03"] == pytest.approx(1 + 0.001 * (5 / 15 - (0.1 + 0.1 + 5 / 15) / 3))
+    assert sum(int(v) for v in scores.values()) == 3
+    ftd = {"C1": ([date(2020, 1, 1), date(2021, 6, 1)], ["OLD", "NEW"])}
+    assert bi.symbol_on(ftd, "C1", date(2020, 12, 31)) == "OLD"
+    assert bi.symbol_on(ftd, "C1", date(2021, 6, 1)) == "NEW"
+    assert bi.symbol_on(ftd, "C1", date(2022, 6, 2)) is None  # > 365 days since last record
+    assert bi.symbol_on(ftd, "C1", date(2019, 1, 1)) is None
+
+    rng = random.Random(11)
+    root = tmp_path / "store"
+    (root / "parquet/sec13f").mkdir(parents=True)
+    (root / "parquet/meta").mkdir(parents=True)
+    syms = [f"T{i:02d}" for i in range(40)]
+    ftd_rows = []
+    for i, s in enumerate(syms):
+        for k in range(8):
+            ftd_rows.append((f"CU{i:03d}", s, date(2019, 1, 15) + timedelta(days=45 * k)))
+    ftd_rows.append(("CU000", "T39", date(2019, 12, 1)))  # CUSIP re-used under another ticker
+    ftd_rows.append(("CUX01", "T05", date(2019, 3, 1)))  # second share class of T05
+    h_rows = []
+    for cik in range(1, 31):
+        for q, (period, filed) in enumerate(
+            [
+                (date(2019, 3, 31), date(2019, 5, 10)),
+                (date(2019, 6, 30), date(2019, 8, 9)),
+                (date(2019, 9, 30), date(2019, 11, 8)),
+            ]  # fmt: skip
+        ):
+            held = rng.sample(range(40), rng.choice([5, 12, 20, 35]))
+            for j in held:
+                h_rows.append((f"A{cik}-{q}", cik, "13F-HR", filed + timedelta(days=cik % 3),
+                               period, f"CU{j:03d}", float(rng.randint(1, 1000))))  # fmt: skip
+            if rng.random() < 0.3:
+                h_rows.append((f"A{cik}-{q}", cik, "13F-HR", filed, period, "CUX01", 50.0))
+    con = duckdb.connect()
+    con.execute("CREATE TABLE f (cusip VARCHAR, symbol VARCHAR, seen DATE)")
+    con.executemany("INSERT INTO f VALUES (?,?,?)", ftd_rows)
+    con.execute(f"COPY f TO '{root}/parquet/meta/ftd_cusip.parquet' (FORMAT parquet)")
+    con.execute("CREATE TABLE h (accession VARCHAR, cik BIGINT, form VARCHAR, filing_date DATE,"
+                " period DATE, cusip VARCHAR, value DOUBLE)")  # fmt: skip
+    con.executemany("INSERT INTO h VALUES (?,?,?,?,?,?,?)", h_rows)
+    con.execute(f"COPY h TO '{root}/parquet/sec13f/x.parquet' (FORMAT parquet)")
+    tables = TableStore(root)
+    days = [date(2019, 6, 28), date(2019, 9, 30), date(2019, 12, 31), date(2020, 9, 30)]
+    eng = bi.BestIdeas({}, days, tables)
+    sql = vb.SqlScorer(tables, days)
+    cands = syms[:36]
+    for t in range(len(days)):
+        sql(cands, t)
+    assert vb.compare_scores(sql, eng, days) == []
+    assert sum(len(r["scores"]) for r in sql.log.values()) > 10
+    assert sql.log["2020-09-30"]["managers"] == 0  # every filing older than 200 days
+    assert bi.fingerprint(tables).startswith("best-ideas:sha256:")
