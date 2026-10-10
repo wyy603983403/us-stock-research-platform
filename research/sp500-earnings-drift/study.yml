@@ -1,0 +1,70 @@
+# 预先登记（2026-10-10，在下载 8-K 数据、计算任何信号值或收益之前写定）。改参数 = 新版本研究。
+# 背景：用户 2026-10-10 要求继续研究个股，四个方向都做（本项为第三个：财报后漂移 PEAD）。
+# 文献：Ball & Brown (1968)、Bernard & Thomas (1989)：财报后股价沿惊喜方向继续漂移；
+#       Brandt, Kishore, Santa-Clara & Venkatachalam (2008)：用财报公布前后几天的超额收益（EAR）衡量惊喜，漂移更强；
+#       Martineau (2022)：2006 年后大盘股的 PEAD 已大幅减弱——本研究就是要在标普 500 里检验这一点。
+# 不用 10-Q 里的 EPS：10-Q 比业绩公告晚 2–4 周提交，用它的日期会错过大部分反应；改用业绩公告当天提交的 8-K（Item 2.02）。
+schema_version: 1
+kind: cross_section
+name: sp500_earnings_drift
+status: registered
+registered_at: 2026-10-10
+question: >
+  在标普 500 时点成分股中，每月末按“最近一次业绩公告前后 3 个交易日的超额收益（EAR）”排序，买入最高的 30 只、等权、
+  每月调仓；2006–2025 年扣除成本后能否跑赢同一股票池的等权组合？
+hypothesis: >
+  市场对业绩信息反应不足，公告期涨得多（坏消息跌得多）的股票之后数周到数月继续同向漂移。
+  主检验：相对同池等权组合的月均超额收益，95% 置信区间下限 > 0。
+universe:
+  membership: meta/sp500_history
+  prices: [daily, daily_delisted]
+  start: 2006-01-01
+  end: 2025-12-31
+  min_history_days: 21
+signal:
+  name: earnings_drift
+earnings:
+  source: SEC EDGAR 公司申报索引（https://data.sec.gov/submissions/CIK##########.json，含较早年份的分页文件）
+  company: 信号日该代码对应的 CIK（meta/ticker_cik 的时段映射）
+  events: 表格类型为 8-K（不含 8-K/A）且 items 含 2.02 的申报；事件日 d = 申报日（filingDate）
+  window: 从 d 的前一个交易日收盘到 d 的后一个交易日收盘（3 个交易日；公告在盘后发布时反应落在 d+1，仍在窗口内）
+  ear: 该股窗口收益 − SPY 同窗口收益
+  known_by: d 的后一个交易日 ≤ 信号日
+  recency: 只用信号日前 92 个自然日内（含）的最近一次事件；没有则不参与排序
+  prices: 复权收盘价，允许向前取最多 5 个交易日（与引擎一致）；窗口两端任一缺价则该事件无效
+selection:
+  top_n: 30
+  weighting: equal
+rebalance: monthly
+execution_lag_days: 1
+transaction_cost_bps: 10
+delisting:
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe          # 同池全部候选（含无事件的股票）
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261012
+risk:
+  max_worst_12m_loss: 0.50
+success_criteria:
+  - 相对等权股票池的月均超额收益，95% 置信区间下限 > 0（主检验）
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验，本研究为第 17 项）
+  - 最差滚动 12 个月亏损不超过 50%
+  - 价格覆盖率每个调仓日 ≥ 90%；事件覆盖率（候选中 92 天内有有效事件的比例）每个调仓日 ≥ 80%
+  - 独立第二实现逐月持仓一致
+reporting:                                # 只报告，不参与晋级
+  - 相对 SPY 的年化超额与夏普
+  - EAR 最低 30 只组合的表现（坏消息是否继续跌）
+  - 2006–2015 与 2016–2025 两段
+  - 事件覆盖率与每月候选数
+limitations:
+  - 8-K 最晚可在公告后 4 个工作日提交；少数公司用 7.01/8.01 或只发新闻稿而不报 2.02，这些事件会缺失或延后（由覆盖率门槛控制）
+  - EAR 只用市场调整（减 SPY），不做行业或规模调整
+  - 文献显示大盘股 PEAD 近年显著减弱；已有 16 组试验，门槛随试验数提高
+human_review:
+  approved: false
