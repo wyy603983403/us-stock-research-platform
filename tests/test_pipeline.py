@@ -3233,3 +3233,84 @@ def test_best_ideas_scores_and_independent_sql(tmp_path: Path) -> None:
     assert sum(len(r["scores"]) for r in sql.log.values()) > 10
     assert sql.log["2020-09-30"]["managers"] == 0  # every filing older than 200 days
     assert bi.fingerprint(tables).startswith("best-ideas:sha256:")
+
+
+def test_earnings_drift_ear_and_independent_sql(tmp_path: Path) -> None:
+    import random
+    from datetime import timedelta
+
+    duckdb = pytest.importorskip("duckdb")
+    from us_stock_research.calendar import trading_days
+    from us_stock_research.collectors import sec_8k
+    from us_stock_research.research import earnings as ea
+    from us_stock_research.research import verify_earnings as ve
+    from us_stock_research.research.cross_section import Prices
+    from us_stock_research.tables import TableStore
+
+    assert ea.is_earnings("8-K", "2.02,9.01") and not ea.is_earnings("8-K/A", "2.02")
+    assert not ea.is_earnings("8-K", "5.02,12.02") and ea.is_earnings("8-K", "9.01, 2.02")
+    blob = {"top": {"filings": {"recent": {"form": ["8-K", "10-Q", "8-K/A"],
+            "accessionNumber": ["a1", "a2", "a3"], "filingDate": ["2020-01-02"] * 3,
+            "acceptanceDateTime": ["x"] * 3, "items": ["2.02", "", "2.02"]},
+            "files": [{"name": "p1.json"}]}},
+            "pages": {"p1.json": {"form": ["8-K", "8-K"], "accessionNumber": ["a0", "a1"],
+                                  "filingDate": ["2019-01-02", "2020-01-02"],
+                                  "items": ["2.02", "2.02"]}}}  # fmt: skip
+    rows = sec_8k.rows_from_raw(7, blob)
+    assert [r[1] for r in rows] == ["a1", "a3", "a0"] and rows[2][4] == ""
+
+    days = trading_days(date(2019, 1, 1), date(2020, 12, 31))
+    rng = random.Random(3)
+    syms = [f"X{i}" for i in range(12)]
+    series: dict[str, list[float | None]] = {}
+    for s in [*syms, "SPY"]:
+        v, out = 100.0, []
+        for _ in days:
+            v *= 1 + rng.gauss(0, 0.02)
+            out.append(v if rng.random() > 0.03 else None)
+        series[s] = out
+    prices = Prices(days=days, series=series)
+    root = tmp_path / "store"
+    (root / "parquet/sec_8k").mkdir(parents=True)
+    (root / "parquet/meta").mkdir(parents=True)
+    con = duckdb.connect()
+    con.execute("CREATE TABLE s (symbol VARCHAR, start_date DATE, end_date DATE, cik BIGINT)")
+    seg = [(s, date(2000, 1, 1), None, 100 + i) for i, s in enumerate(syms[:11])]
+    seg[0] = ("X0", date(2000, 1, 1), date(2020, 3, 1), 100)
+    seg.append(("X0", date(2020, 3, 1), None, 500))  # ticker moves to another company
+    con.executemany("INSERT INTO s VALUES (?,?,?,?)", seg)
+    con.execute(f"COPY s TO '{root}/parquet/meta/ticker_cik.parquet' (FORMAT parquet)")
+    for i in range(12):
+        cik = 100 + i if i else 500
+        evs = []
+        d = date(2019, 1, 20) + timedelta(days=rng.randint(0, 20))
+        while d < date(2020, 12, 31):
+            evs.append((cik, f"{cik}-{d}", "8-K", d, "", rng.choice(["2.02,9.01", "2.02"])))
+            evs.append((cik, f"{cik}-{d}-o", "8-K", d + timedelta(days=3), "", "7.01"))
+            d += timedelta(days=rng.choice([88, 91, 95, 120]))
+        cols = [[r[k] for r in evs] for k in range(6)]
+        TableStore(root).write("sec_8k", sec_8k.key_of(cik), sec_8k.SCHEMA, cols, "filing_date")
+    tables = TableStore(root)
+    events = ea.load_events(tables)
+    from us_stock_research.research.fundamentals import load_segments
+
+    eng = ea.EarningsDrift({}, prices, events, load_segments(tables))
+    sql = ve.SqlScorer(tables, prices)
+    ends = [i for i in range(len(days) - 1) if days[i + 1].month != days[i].month][3:]
+    for t in ends:
+        sql(syms, t)
+    assert ve.compare_scores(sql, eng) == []
+    ranked = sum(r["stats"]["with_event"] for r in sql.log.values())
+    assert ranked > 5 * len(ends)
+    assert all(r["scores"]["X11"] == float("-inf") for r in sql.log.values())  # no CIK
+    # hand check one EAR
+    t = ends[-1]
+    s0 = next(s for s in syms if eng(syms, t)[0][s] != float("-inf"))
+    d = eng.latest_event(load_segments(tables)[s0][-1][2] or 0, t)
+    assert d is not None
+    i0, i1 = ea.window(days, d)
+    a, b = prices.at(s0, i0, 5), prices.at(s0, i1, 5)
+    m0, m1 = prices.at("SPY", i0, 5), prices.at("SPY", i1, 5)
+    assert a and b and m0 and m1
+    expect = (b[1] / a[1] - 1) - (m1[1] / m0[1] - 1)
+    assert eng(syms, t)[0][s0] == pytest.approx(expect)

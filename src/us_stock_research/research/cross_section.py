@@ -310,6 +310,13 @@ def summarize(contract: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
         extra["managers_min"] = min(b["managers"] for b in bi)
         extra["managers_mean"] = sum(b["managers"] for b in bi) / len(bi)
         extra["with_best_idea_mean"] = sum(b["with_best_idea"] for b in bi) / len(bi)
+    ev = [m["earnings"] for m in months if "earnings" in m]
+    if ev:
+        cov = [e["with_event"] / e["candidates"] if e["candidates"] else 0.0 for e in ev]
+        extra["event_coverage_min"] = min(cov)
+        extra["event_coverage_mean"] = sum(cov) / len(cov)
+        extra["event_no_cik_max"] = max(e["no_cik"] for e in ev)
+        extra["event_invalid_max"] = max(e["invalid"] for e in ev)
     return {
         **extra,
         "strategy": monthly_metrics(strat),
@@ -439,6 +446,13 @@ def build_scorer(
         from us_stock_research.research.best_ideas import BestIdeas, fingerprint
 
         return BestIdeas(contract, prices.days, tables), fingerprint(tables)
+    if name == "earnings_drift":
+        from us_stock_research.research import earnings as ea
+
+        events = ea.load_events(tables)
+        return ea.EarningsDrift(contract, prices, events, fu.load_segments(tables)), (
+            ea.fingerprint(tables)
+        )
     spec = contract["fundamentals"]
     reports, fund_id = fu.load_reports(
         tables, fu.tag_lists(spec), str(spec.get("source", "sec_fsds"))
@@ -480,6 +494,9 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     cusip = summary.get("cusip_mapping_coverage_min")
     if cusip is not None and cusip < 0.9:
         fails.append(f"最低 CUSIP 映射覆盖率 {cusip:.1%} < 90%")
+    events = summary.get("event_coverage_min")
+    if events is not None and events < 0.8:
+        fails.append(f"最低业绩事件覆盖率 {events:.1%} < 80%")
     return fails
 
 
