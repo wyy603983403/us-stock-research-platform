@@ -327,6 +327,12 @@ def summarize(contract: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
         extra["event_coverage_mean"] = sum(cov) / len(cov)
         extra["event_no_cik_max"] = max(e["no_cik"] for e in ev)
         extra["event_invalid_max"] = max(e["invalid"] for e in ev)
+    sh = [m["short_interest"] for m in months if "short_interest" in m]
+    if sh:
+        cov = [x["with_value"] / x["candidates"] if x["candidates"] else 0.0 for x in sh]
+        extra["dtc_coverage_min"] = min(cov)
+        extra["dtc_coverage_mean"] = sum(cov) / len(cov)
+        extra["dtc_lag_days_max"] = max(x["lag_days"] for x in sh)
     return {
         **extra,
         "strategy": monthly_metrics(strat),
@@ -456,6 +462,10 @@ def build_scorer(
         from us_stock_research.research.best_ideas import BestIdeas, fingerprint
 
         return BestIdeas(contract, prices.days, tables), fingerprint(tables)
+    if name == "short_interest":
+        from us_stock_research.research import short_interest as si
+
+        return si.ShortInterest(contract, prices.days, tables), si.fingerprint(tables)
     if name == "earnings_drift":
         from us_stock_research.research import earnings as ea
 
@@ -504,6 +514,9 @@ def evaluate(contract: dict[str, Any], summary: dict[str, Any], dsr: float | Non
     cusip = summary.get("cusip_mapping_coverage_min")
     if cusip is not None and cusip < 0.9:
         fails.append(f"最低 CUSIP 映射覆盖率 {cusip:.1%} < 90%")
+    dtc = summary.get("dtc_coverage_min")
+    if dtc is not None and dtc < 0.9:
+        fails.append(f"最低回补天数覆盖率 {dtc:.1%} < 90%")
     events = summary.get("event_coverage_min")
     if events is not None and events < 0.8:
         fails.append(f"最低业绩事件覆盖率 {events:.1%} < 80%")

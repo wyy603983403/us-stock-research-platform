@@ -6,7 +6,7 @@
 schema_version: 1
 kind: cross_section
 name: sp500_short_interest
-status: registered
+status: registered            # 已运行，未通过主检验（2026-10-10，见 docs/results/sp500-short-interest.md）
 registered_at: 2026-10-10
 question: >
   在标普 500 时点成分股中，每月末按最新已公布的回补天数（空头股数 ÷ 日均成交量）从低到高排序，买入最低的 30 只、等权、

@@ -3314,3 +3314,48 @@ def test_earnings_drift_ear_and_independent_sql(tmp_path: Path) -> None:
     assert a and b and m0 and m1
     expect = (b[1] / a[1] - 1) - (m1[1] / m0[1] - 1)
     assert eng(syms, t)[0][s0] == pytest.approx(expect)
+
+
+def test_short_interest_days_to_cover_and_independent_sql(tmp_path: Path) -> None:
+    import random
+    from datetime import timedelta
+
+    pytest.importorskip("duckdb")
+    from us_stock_research.collectors import finra_short as fs
+    from us_stock_research.research import short_interest as si
+    from us_stock_research.research import verify_short_interest as vs
+    from us_stock_research.tables import TableStore
+
+    text = (
+        "accountingYearMonthNumber|symbolCode|issueName|marketClassCode|"
+        "currentShortPositionQuantity|averageDailyVolumeQuantity|revisionFlag\n"
+        '20200115|BRK.B|Berkshire "B"|NYSE|100|50|\n20200115|ZZ|Z|NNM|7||R\n'
+    )
+    rows = fs.parse(text, date(2020, 1, 15))
+    assert rows[0][1:5] == ("BRK.B", "NYSE", 100.0, 50.0) and rows[1][4] is None
+    dtc = si.days_to_cover([("BRK.B", 100.0, 50.0), ("BRK/B", 10.0, 1.0), ("ZZ", 7.0, None),
+                            ("Q", 5.0, 0.0)])  # fmt: skip
+    assert dtc == {"BRK-B": 2.0}
+
+    rng = random.Random(9)
+    root = tmp_path / "store"
+    store = TableStore(root)
+    syms = [f"S{i}" for i in range(15)] + ["BRK-B"]
+    settles = [date(2020, 1, 15) + timedelta(days=15 * k) for k in range(10)]
+    for d in settles:
+        rs = []
+        for s in syms[:-2] + ["BRK.B"]:
+            rs.append((d, s, "NYSE", float(rng.randint(0, 9999)), rng.choice([0.0, 50.0, 300.0])))
+        rs.append((d, "S0", "NYSE", 1.0, 1.0))  # duplicate row, smaller short position
+        cols = [[r[i] if i < 5 else "" for r in rs] for i in range(6)]
+        store.write("short_interest", f"{d:%Y%m%d}", fs.SCHEMA, cols, "symbol")
+    days = [date(2020, 1, 1) + timedelta(days=i) for i in range(200)]
+    eng = si.ShortInterest({}, days, store)
+    sql = vs.SqlScorer(store, days)
+    for t in (10, 29, 30, 60, 120, 199):
+        sql(syms, t)
+    assert vs.compare_scores(sql, eng) == []
+    assert sql.log["2020-01-11"]["stats"]["lag_days"] == -1  # nothing published yet
+    rec = sql.log["2020-07-18"]
+    assert rec["stats"]["lag_days"] >= 14 and rec["scores"]["S14"] == float("-inf")
+    assert any(v != float("-inf") for v in rec["scores"].values())
