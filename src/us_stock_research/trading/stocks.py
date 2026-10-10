@@ -604,6 +604,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
     except ValueError as exc:
         print(f"未执行：{exc}")
         return 2
+    except Exception as exc:  # noqa: BLE001 - network/data errors must not crash the daily run
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+        what = f"HTTP {code}" if code else type(exc).__name__
+        print(f"个股{'候选' if args.cmd == 'screen' else '板块'}：数据下载失败（{what}），本次跳过")
+        return 2
     return 0
 
 

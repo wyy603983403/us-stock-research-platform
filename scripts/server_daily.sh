@@ -4,7 +4,7 @@
 #   数据（SPY/SSO/BIL/TLT/IEF/GLD + FRED）→ 演练记账 →（模拟盘打开时：对账）→ 出单 →（模拟盘打开时：发收盘竞价单）→ 状态 → 通知
 set -uo pipefail
 cd "$(dirname "$0")/.."
-STAMP="$(date +%Y%m%d)"
+STAMP="${USR_STAMP:-$(date +%Y%m%d)}"   # USR_STAMP / USR_ASOF: only for tools/rehearse_server.py
 LOG=logs/daily_$STAMP.log
 exec > >(tee -a "$LOG") 2>&1
 echo "== $(date '+%F %T %Z') 开始"
@@ -29,9 +29,9 @@ if [ "$PAPER_ON" = "True" ]; then
   LEDGER=portfolio/paper/$STUDY.yml
 fi
 HOLD=""; [ -f "$LEDGER" ] && HOLD="--holdings $LEDGER"
-LASTDAY=$(.venv/bin/python -c "from datetime import UTC, datetime
+LASTDAY=${USR_ASOF:-$(.venv/bin/python -c "from datetime import UTC, datetime
 from us_stock_research.quality.intraday import last_closed_session
-print(last_closed_session(datetime.now(UTC)).isoformat())")
+print(last_closed_session(datetime.now(UTC)).isoformat())")}
 LT_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
   --breaker 0.40 $HOLD 2>&1 | tail -n 1) || LT_OUT="生成失败"
 echo "$LT_OUT"
