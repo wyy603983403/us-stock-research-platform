@@ -1,0 +1,72 @@
+# 预先登记（2026-10-10，在计算任何信号值或收益之前写定；此前只下载了一个季度的 13F 样本文件查看表结构）。改参数 = 新版本研究。
+# 背景：用户 2026-10-10 要求继续研究个股，四个方向都做（本项为第二个：机构“最看好”持仓，属于资金面）。
+# 文献：Cohen, Polk & Silli (2010) “Best Ideas”：基金经理相对基准超配最多的那只股票显著跑赢，其余持仓不跑赢。
+schema_version: 1
+kind: cross_section
+name: sp500_best_ideas_13f
+status: registered
+registered_at: 2026-10-10
+question: >
+  在标普 500 时点成分股中，每月末统计有多少家主动型机构把该股作为“最看好”持仓（相对同业平均权重超配最多的一只），
+  按人数买入前 30 只、等权、每月调仓；2014–2025 年扣除成本后能否跑赢同一股票池的等权组合？
+hypothesis: >
+  机构的最高信念持仓包含信息（Cohen-Polk-Silli 2010）；被多家机构同时作为最看好的股票未来收益更高。
+  主检验：相对同池等权组合的月均超额收益，95% 置信区间下限 > 0。
+universe:
+  membership: meta/sp500_history
+  prices: [daily, daily_delisted]
+  start: 2014-01-01
+  end: 2025-12-31
+  min_history_days: 21
+signal:
+  name: best_ideas
+best_ideas:
+  source: SEC Form 13F 数据集（https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets，2013Q2 起）
+  filings: 13F-HR 原始申报（不含 13F-HR/A 修订、13F-NT）；同一机构同一报告期多份时取申报日最新的一份
+  known_by: FILING_DATE <= 信号日；只用报告期（PERIODOFREPORT）距信号日 ≤ 200 天的最新一份
+  holdings: 只计 SSHPRNAMTTYPE = SH 且无 PUTCALL 的普通持仓；同一 CUSIP 多行相加
+  cusip_to_symbol: >
+    SEC 交割失败数据（cnsfails，半月一份，含结算日、CUSIP、代码）：某 CUSIP 在信号日前 365 天内最后一次出现时的代码，
+    且该代码当日为标普 500 成员，即视为该成员；一个成员对应多个 CUSIP（多类股）时分别计入
+  manager_filter: 映射到当日标普 500 成员的持仓只数在 10–150 之间的机构（剔除指数型与过于集中的申报）
+  weights: 机构对每只成员的权重 = 该持仓市值 / 该机构全部已映射成员持仓市值（单位在同一份申报内一致，可约去）
+  consensus: 同一信号日所有入选机构权重的简单平均（未持有记 0）
+  best_idea: 每家机构 (权重 − 同业平均权重) 最大的那一只；并列时取权重较大者，再按代码
+  score: 把该股作为最看好的机构家数 + 0.001 × 这些机构的超配幅度之和（只用于打破平手）
+selection:
+  top_n: 30
+  min_score: 1                            # 至少被一家机构作为最看好
+  weighting: equal
+rebalance: monthly
+execution_lag_days: 1
+transaction_cost_bps: 10
+delisting:
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261011
+risk:
+  max_worst_12m_loss: 0.50
+success_criteria:
+  - 相对等权股票池的月均超额收益，95% 置信区间下限 > 0（主检验）
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验，本研究为第 16 项）
+  - 最差滚动 12 个月亏损不超过 50%
+  - 价格覆盖率每个调仓日 ≥ 90%；CUSIP 映射覆盖率（当日成员中至少有一个 CUSIP 被映射的比例）每个调仓日 ≥ 90%
+  - 独立第二实现（SQL 计算信号）逐月持仓一致
+reporting:
+  - 相对 SPY 的年化超额与夏普
+  - 入选机构数、每月有“最看好”的成员数
+  - 2014–2019 与 2020–2025 两段
+limitations:
+  - 13F 只覆盖管理资产 ≥ 1 亿美元的机构、只含多头、季末快照且最多晚 45 天公开
+  - 用同业平均权重代替原文的市值权重作基准（13F 申报的金额单位在 2023 年前后不同，权重法不受影响）
+  - CUSIP 映射依赖交割失败数据，极少出现交割失败的股票可能映射不上（由覆盖率门槛控制）
+  - 已有 15 组试验，门槛随试验数提高
+human_review:
+  approved: false
