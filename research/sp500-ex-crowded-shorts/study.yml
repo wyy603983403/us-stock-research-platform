@@ -1,0 +1,68 @@
+# 预先登记（2026-10-10，在计算本规则任何收益之前写定）。改参数 = 新版本研究。
+# 背景：研究 18（sp500_short_interest）报告项中观察到：回补天数最高的 30 只 2018–2025 年化 3.2%，同池等权 10.1%。
+# 用户 2026-10-10 要求把这个观察单独登记检验（“都做”）。
+# 重要：主检验期 2018–2025 与产生观察的数据重叠，不是独立样本——即使通过，也只能说明“剔除 10% 而非 30 只时仍成立”；
+# 真正独立的证据只有留出期 2026-01 起（看到观察时这段数据尚未下载），以及之后的前瞻跟踪。
+# 文献：Asquith-Pathak-Ritter (2005)、Boehmer-Huszar-Jordan (2010)、Hong 等 (2015)：空头最拥挤的股票随后跑输。
+schema_version: 1
+kind: cross_section
+name: sp500_ex_crowded_shorts
+status: registered
+registered_at: 2026-10-10
+question: >
+  标普 500 时点成分股等权，每月末剔除最新已公布回补天数最高的 10%（其余全部等权持有，含没有回补天数的股票），
+  2018–2025 年扣除成本后能否跑赢不剔除的等权组合？
+hypothesis: >
+  卖空者集中做空的股票随后表现差；剔除它们可以小幅提高等权组合收益。
+  主检验：相对同池等权组合的月均超额收益，95% 置信区间下限 > 0。
+universe:
+  membership: meta/sp500_history
+  prices: [daily, daily_delisted]
+  start: 2018-01-01
+  end: 2025-12-31
+  min_history_days: 21
+signal:
+  name: short_interest                     # 与研究 18 相同的回补天数定义、公布滞后（结算日 + 14 天）与代码匹配
+short_interest:
+  source: FINRA 半月度空头仓位文件（https://cdn.finra.org/equity/otcmarket/biweekly/shrtYYYYMMDD.csv）
+  definition: 同 research/sp500-short-interest/study.yml 的 short_interest 段
+selection:
+  exclude_top_fraction: 0.10               # 有回补天数的候选中，最高的 ceil(10% × 只数) 只剔除；并列时按代码
+  weighting: equal
+rebalance: monthly
+execution_lag_days: 1
+transaction_cost_bps: 10
+delisting:
+  haircut_sensitivity: -0.30
+benchmarks:
+  primary: equal_weight_universe
+  secondary: SPY
+inference:
+  method: moving_block_bootstrap
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261014
+risk:
+  max_worst_12m_loss: 0.50
+success_criteria:
+  - 相对等权股票池的月均超额收益，95% 置信区间下限 > 0（主检验）
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验，本研究为第 19 项）
+  - 最差滚动 12 个月亏损不超过 50%
+  - 价格覆盖率每个调仓日 ≥ 90%；回补天数覆盖率每个调仓日 ≥ 90%
+  - 独立第二实现逐月持仓一致
+holdout:                                   # 只报告，样本太短不做推断；看到研究 18 结果时尚未下载
+  start: 2026-01-01
+  end: 2026-08-31                          # 最后一个信号月（其后一个月收益已有价格）
+  report: 逐月超额、累计超额、超额为正的月份数
+reporting:
+  - 被剔除组合（回补天数最高 10%）本身的年化收益
+  - 2018–2021 与 2022–2025 两段
+  - 相对 SPY 的年化超额
+limitations:
+  - 主检验期与产生假设的数据重叠（见文件开头），统计显著也不构成独立确认
+  - 剔除 10% 对等权组合的影响天然很小，8 年样本检验力低
+  - FINRA 现存文件可能含事后修订
+  - 已有 18 组试验，门槛随试验数提高
+human_review:
+  approved: false
