@@ -7,7 +7,7 @@
 schema_version: 1
 kind: cross_section
 name: sp500_ex_crowded_shorts
-status: registered
+status: registered            # 已运行，未通过主检验（2026-10-10，见 docs/results/sp500-ex-crowded-shorts.md）
 registered_at: 2026-10-10
 question: >
   标普 500 时点成分股等权，每月末剔除最新已公布回补天数最高的 10%（其余全部等权持有，含没有回补天数的股票），
@@ -53,7 +53,7 @@ success_criteria:
   - 独立第二实现逐月持仓一致
 holdout:                                   # 只报告，样本太短不做推断；看到研究 18 结果时尚未下载
   start: 2026-01-01
-  end: 2026-08-31                          # 最后一个信号月（其后一个月收益已有价格）
+  end: 2026-08-31                          # 最后一个信号月（其后一个月收益已有价格；运行时数据窗口取到 9 月末以取得 8 月信号的收益）
   report: 逐月超额、累计超额、超额为正的月份数
 reporting:
   - 被剔除组合（回补天数最高 10%）本身的年化收益

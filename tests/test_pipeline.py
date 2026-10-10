@@ -1094,7 +1094,8 @@ def test_cross_section_point_in_time_engine() -> None:
     assert summary["coverage_min"] == months["2020-06"]["coverage"] == 0.75  # GONE unpriced
     for path_ in (ROOT / "research").glob("*/study.yml"):
         if "kind: cross_section" in path_.read_text():
-            assert xs.load_xs_contract(path_)["selection"]["top_n"] in (30, 50, 100)
+            sel = xs.load_xs_contract(path_)["selection"]
+            assert sel.get("top_n") in (30, 50, 100) or sel.get("exclude_top_fraction") == 0.10
 
 
 def test_ticker_aliases_borrow_successor_history() -> None:
@@ -2707,6 +2708,20 @@ def test_stocks_screen_rules() -> None:
     )
     md = st.render_screen(res, date(2026, 10, 9), m)
     assert "不是买入建议" in md and "| 1 | UP1 |" in md
+    # crowded shorts: top 10% of members by days to cover are flagged, never removed
+    dtc = {s: float(i) for i, s in enumerate(sorted(series))}  # 15 members, cut = 14th value
+    short = {"settlement": "2026-09-30", "dtc": dtc}
+    assert st.crowded_cut(dtc, set(series), 0.10) == 13.0
+    res2 = st.screen(series, meta, cfg, held={"UP2"}, short=short)
+    assert [r["symbol"] for r in res2["candidates"]] == syms
+    flagged = {r["symbol"] for r in res2["candidates"] if r["crowded"]}
+    assert flagged == {s for s in syms if dtc[s] >= 13.0}
+    md2 = st.render_screen(res2, date(2026, 10, 9), m)
+    assert "回补天数" in md2 and "2026-09-30" in md2
+    notes = st.short_notes(["WILD", "F1"], short, set(series), 0.10)
+    top = sorted(series)[-2:]
+    assert all(n.split()[0] in top for n in notes) and len(notes) == len({"WILD", "F1"} & set(top))
+    assert st.short_notes(["UP1"], None, set(series), 0.1) == []
 
 
 def test_alpaca_fetch_many_pages_and_symbols() -> None:
@@ -3359,3 +3374,32 @@ def test_short_interest_days_to_cover_and_independent_sql(tmp_path: Path) -> Non
     rec = sql.log["2020-07-18"]
     assert rec["stats"]["lag_days"] >= 14 and rec["scores"]["S14"] == float("-inf")
     assert any(v != float("-inf") for v in rec["scores"].values())
+
+
+def test_exclude_top_fraction_drops_worst_scored_only() -> None:
+    from datetime import timedelta
+
+    from us_stock_research.research import cross_section as xs
+
+    days = [date(2020, 1, 1) + timedelta(days=i) for i in range(120)]
+    days = [d for d in days if d.weekday() < 5]
+    syms = [f"A{i}" for i in range(10)] + ["NONE"]
+    series = {s: [100.0 + i + 0.1 * k for k in range(len(days))] for i, s in enumerate(syms)}
+    series["SPY"] = [100.0] * len(days)
+    prices = xs.Prices(days=days, series=series)
+    history = [(s, date(2019, 1, 1), None) for s in syms]
+    contract = {
+        "universe": {"start": days[0], "end": days[-1], "min_history_days": 5},
+        "signal": {"name": "short_interest"},
+        "selection": {"exclude_top_fraction": 0.25},
+        "execution_lag_days": 1,
+        "transaction_cost_bps": 0,
+    }
+
+    def scorer(cands: list[str], t: int) -> tuple[dict[str, float], dict[str, int]]:
+        return {s: (float("-inf") if s == "NONE" else -float(s[1:])) for s in cands}, {}
+
+    months = xs.run(contract, prices, history, scorer=scorer)["months"]
+    m = months[0]
+    assert m["dropped"] == ["A7", "A8", "A9"]  # ceil(25% x 10 scored), highest "days to cover"
+    assert m["picks"] == 8  # A0..A6 plus the unscored NONE

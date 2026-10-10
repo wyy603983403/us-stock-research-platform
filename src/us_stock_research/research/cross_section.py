@@ -192,7 +192,8 @@ def run(
     lag = int(contract["execution_lag_days"])
     bps = float(contract.get("transaction_cost_bps", 0.0))
     need = int(uni["min_history_days"])
-    top_n = int(sel["top_n"])
+    top_n = int(sel.get("top_n") or 0)
+    drop_top = sel.get("exclude_top_fraction")
     lower_is_better = sig["name"] == "low_volatility"
     excluded = excluded or set()
     ends = month_end_indices(prices.days, uni["start"], uni["end"])
@@ -226,7 +227,14 @@ def run(
         )
         if sel.get("min_score") is not None:  # e.g. only stocks with insider purchases
             ranked = [s for s in ranked if eligible[s] >= float(sel["min_score"])]
-        picks = ranked[:top_n]
+        if drop_top is not None:  # hold everything except the worst-scored fraction
+            scored = [s for s in ranked if eligible[s] != float("-inf")]
+            k = math.ceil(len(scored) * float(drop_top))
+            dropped = set(scored[len(scored) - k :]) if k else set()
+            picks = [s for s in ranked if s not in dropped]
+        else:
+            dropped = set()
+            picks = ranked[:top_n]
         entry, exit_ = t + lag, min(t_next + lag, len(prices.days) - 1)
         rets: dict[str, float] = {}
         delisted = 0
@@ -260,6 +268,14 @@ def run(
                 "turnover_one_way": turnover,
                 "early_exits": int(delisted),
                 "top": picks[:10],
+                **(
+                    {
+                        "dropped": sorted(dropped),
+                        "dropped_return_gross": sum(rets[s] for s in dropped) / len(dropped),
+                    }
+                    if dropped
+                    else {}
+                ),
                 **({STATS_KEY.get(sig["name"], "signal_stats"): stats} if stats else {}),
             }
         )

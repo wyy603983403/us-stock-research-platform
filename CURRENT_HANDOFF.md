@@ -99,4 +99,6 @@
     停止文件 portfolio/STOP_TRADING 现在也拦住模拟盘下单；恢复只在 Mac：scripts/control.sh resume。
 48. 2026-10-09/10 首批 vt_only 运行暴露：21:15 ET 雅虎数据未出、模型起点前数据导致崩溃、Alpaca 403 无原因、个股读不到 .env。
     已修（ae42ee6）；tools/rehearse_server.py 离线彩排每日流程（13 项检查）；usr-watch 盘中大跌预警、usr-weekly 周报。
-
+49. 2026-10-10 用户“继续研究个股 / 1 到 4 都研究 / 都做”：研究 15–19 全部未通过（小盘因子、13F 最看好、财报后漂移、空头最少、
+    等权剔除空头最拥挤 10%），结果在 docs/results/。新增数据收集：usr-collect-8k（SEC 8-K 索引，可 --from-raw 解析 Mac 下载的原始文件）、
+    usr-collect-short（FINRA 半月度空头文件；2026 年起文件改为带引号，已兼容）。个股清单与持仓加“空头拥挤”提醒（configs/stocks.yml short_crowded_share）。

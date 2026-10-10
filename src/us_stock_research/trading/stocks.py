@@ -231,6 +231,52 @@ def write_fill(path: Path, row: list[Any]) -> None:
         w.writerow(row)
 
 
+# ---------------------------------------------------------------- short interest
+
+
+def crowded_cut(dtc: dict[str, float], members: set[str], share: float) -> float | None:
+    """Days-to-cover at or above which a member is in the most crowded ``share`` of members."""
+    vals = sorted(v for s, v in dtc.items() if s in members)
+    if not vals or share <= 0:
+        return None
+    return vals[max(0, math.ceil(len(vals) * (1 - share)) - 1)]
+
+
+def short_notes(
+    symbols: list[str], short: dict[str, Any] | None, members: set[str], share: float
+) -> list[str]:
+    """Reminders for held stocks among the most shorted (days to cover) S&P 500 members."""
+    if not short:
+        return []
+    cut = crowded_cut(short["dtc"], members, share)
+    if cut is None:
+        return []
+    return [
+        f"{s} 空头拥挤（回补 {short['dtc'][s]:.1f} 天，标普前 {share:.0%}，"
+        f"FINRA {short['settlement']}）"
+        for s in sorted(symbols)
+        if short["dtc"].get(s, -1.0) >= cut
+    ]
+
+
+def latest_short(client: Any, day: date, max_back: int = 30) -> dict[str, Any] | None:
+    """Newest FINRA short interest file settled on or before ``day`` (None if none found)."""
+    from us_stock_research.collectors.finra_short import URL, parse
+    from us_stock_research.research.short_interest import days_to_cover
+
+    for back in range(max_back + 1):
+        d = day - timedelta(days=back)
+        r = client.get(URL.format(d=d))
+        if r.status_code != 200:
+            continue
+        rows = parse(r.text, d)
+        return {
+            "settlement": d.isoformat(),
+            "dtc": days_to_cover([(x[1], x[3], x[4]) for x in rows]),
+        }
+    return None
+
+
 # ---------------------------------------------------------------- screening
 
 
@@ -262,15 +308,23 @@ def screen(
     meta: dict[str, tuple[str, str]],
     cfg: dict[str, Any],
     held: set[str] | None = None,
+    short: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     held = held or set()
+    share = float(cfg.get("short_crowded_share", 0.10))
+    cut = crowded_cut(short["dtc"], set(meta), share) if short else None
     rows = []
     for sym, closes in series.items():
         m = screen_metrics(closes, cfg)
         if m is None:
             continue
         name, sector = meta.get(sym, ("", ""))
-        rows.append({"symbol": sym, "name": name, "sector": sector, **m, "held": sym in held})
+        dtc = short["dtc"].get(sym) if short else None
+        crowded = cut is not None and dtc is not None and dtc >= cut
+        rows.append(
+            {"symbol": sym, "name": name, "sector": sector, **m, "held": sym in held,
+             "dtc": dtc, "crowded": crowded}
+        )  # fmt: skip
     if not rows:
         return {"eligible": 0, "candidates": [], "vol_cut": None}
     vols = sorted(r["vol"] for r in rows)
@@ -292,7 +346,9 @@ def screen(
         "trend_pool": len(pool),
         "vol_cut": vol_cut,
         "candidates": picked,
-    }
+        "short": None if not short else {"settlement": short["settlement"], "cut": cut,
+                                         "share": share},
+    }  # fmt: skip
 
 
 def render_screen(result: dict[str, Any], day: date, bench: dict[str, float] | None) -> str:
@@ -315,15 +371,28 @@ def render_screen(result: dict[str, Any], day: date, bench: dict[str, float] | N
     lines += [
         "",
         "| # | 代码 | 公司 | 行业 | 12-1 动量 | 近 6 月 | 距 200 日线 | 60 日波动 "
-        "| 距一年高点 | 已持有 |",
-        "|---:|---|---|---|---:|---:|---:|---:|---:|---|",
+        "| 距一年高点 | 回补天数 | 已持有 |",
+        "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for i, r in enumerate(result["candidates"], 1):
+        dtc = r.get("dtc")
+        cell = "—" if dtc is None else f"{dtc:.1f}" + (" ⚠️拥挤" if r.get("crowded") else "")
         lines.append(
             f"| {i} | {r['symbol']} | {r['name']} | {r['sector']} | {r['momentum_12_1']:+.0%} "
             f"| {r['return_6m']:+.0%} | {r['vs_sma']:+.0%} | {r['vol']:.0%} "
-            f"| {r['from_high']:+.0%} | {'是' if r['held'] else ''} |"
+            f"| {r['from_high']:+.0%} | {cell} | {'是' if r['held'] else ''} |"
         )
+    sh = result.get("short")
+    lines.append("")
+    if sh and sh.get("cut") is not None:
+        lines.append(
+            f"回补天数 = 空头股数 ÷ 日均成交量（FINRA，结算日 {sh['settlement']}）。"
+            f"⚠️拥挤 = 标普 500 中最高的 {sh['share']:.0%}（≥ {sh['cut']:.1f} 天）。"
+            "研究 18（docs/results/sp500-short-interest.md）中，回补天数最高的 30 只 2018–2025 "
+            "年化 3.2%，同期等权 10.1%（看过结果后的观察，未经独立验证）；只作提醒。"
+        )
+    else:
+        lines.append("回补天数：本次没有拿到 FINRA 空头数据。")
     lines += [
         "",
         "买之前：`bash scripts/stocks.sh plan 代码 BUY 股数 价格` 检查仓位上限；"
@@ -395,6 +464,32 @@ def _spy_adj(day: date) -> dict[date, float]:
     except Exception:  # noqa: BLE001 - benchmark is informative only
         return {}
     return {b.day: b.adj_close for b in bars if b.day <= day and b.adj_close > 0}
+
+
+def _try_short(client: Any, day: date) -> dict[str, Any] | None:
+    try:
+        return latest_short(client, day)
+    except Exception:  # noqa: BLE001 - the short-interest reminder is optional
+        return None
+
+
+def _short_alerts(held: list[str], day: date, limits: dict[str, Any]) -> list[str]:
+    """Crowded-short reminders for held stocks; empty when the data cannot be fetched."""
+    if not held:
+        return []
+    import httpx
+
+    from us_stock_research.collectors.universe import SP500_URL, parse_sp500_meta
+
+    try:
+        with httpx.Client(timeout=60, follow_redirects=True) as client:
+            short = latest_short(client, day)
+            resp = client.get(SP500_URL)
+            resp.raise_for_status()
+            members = set(parse_sp500_meta(resp.text)[0])
+    except Exception:  # noqa: BLE001 - optional reminder
+        return []
+    return short_notes(held, short, members, float(limits.get("short_crowded_share", 0.10)))
 
 
 def _last_session() -> date:
@@ -534,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
             prices = _latest_raw_closes(list((ledger.get("positions") or {}).keys()), day)
             v = valuation(ledger, prices)
             notes = alerts(ledger, v, limits)
+            notes += _short_alerts(list((ledger.get("positions") or {}).keys()), day, limits)
             ledger["peak_nav_usd"] = round(max(float(ledger.get("peak_nav_usd") or 0), v["nav"]), 2)
             spy = _spy_adj(day)
             bench_ret = None
@@ -589,12 +685,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
                     *keys,
                     adjustment="all",
                 )
+                short = _try_short(client, day)
             series = {s: [b.close for b in b_ if b.day <= day] for s, b_ in bars.items()}
             spy = series.pop("SPY", [])
             held = set()
             if path.exists():
                 held = set((load(path).get("positions") or {}).keys())
-            result = screen(series, meta, cfg["screen"], held)
+            result = screen(series, meta, cfg["screen"], held, short)
             bench = screen_metrics(spy, cfg["screen"]) if spy else None
             args.out_dir.mkdir(parents=True, exist_ok=True)
             out = args.out_dir / f"screen_{day.isoformat()}.md"

@@ -10,6 +10,7 @@ alerts:                          # 用户 2026-10-08 选择
   max_position_share: 0.25       # 单只市值 > 板块净值 25% 时提醒（买前检查也用这个数）
   drop_from_cost: 0.20           # 现价比平均成本低 20% 及以上时提醒
   section_drawdown: 0.30         # 板块净值比历史最高低 30% 及以上时提醒
+  short_crowded_share: 0.10      # 持仓的回补天数（FINRA 空头股数 ÷ 日均成交量）在标普 500 最高 10% 时提醒（用户 2026-10-10 要求；依据研究 18 的观察）
 
 screen:                          # 每周一次（周五信号日的那次运行），结果在 artifacts/stocks/screen_<日期>.md
   universe: sp500_current        # 当前标普 500 成分股（datasets/s-and-p-500-companies）
@@ -20,3 +21,4 @@ screen:                          # 每周一次（周五信号日的那次运行
   drop_top_vol_share: 0.10
   top_n: 20
   max_per_sector: 5              # 同一行业最多列 5 只，避免清单全是一个行业
+  short_crowded_share: 0.10      # 清单里标出回补天数在标普 500 最高 10% 的股票（⚠️拥挤），只标注不剔除

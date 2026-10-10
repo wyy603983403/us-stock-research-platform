@@ -47,6 +47,9 @@
   状态在 `artifacts/stocks/status.md`（`bash scripts/stocks.sh status`）。
 - 每周五信号日：`usr-stocks screen` 生成 `artifacts/stocks/screen_<日期>.md`（`bash scripts/stocks.sh screen`）。
   规则见 `configs/stocks.yml`；**未经验证有超额收益**，只是参考清单。
+- 空头拥挤提醒（2026-10-10）：清单多一列“回补天数”（FINRA 空头股数 ÷ 日均成交量，取最新一期文件），在标普 500 最高 10% 的标 ⚠️拥挤（只标注、不剔除）；
+  每日估值时持仓若进入最高 10% 也会提醒。依据研究 18/19：最拥挤的 30 只 2018–2025 明显落后，但剔除 10% 的规则检验未通过，所以只作提醒。
+  FINRA 文件取不到时静默跳过这一项。
 - 个股板块不能买卖策略代码（SPY/SSO/BIL/TLT/IEF/GLD），以免两本账混在一起。
 
 ## 嘉信 Trader API（2026-10-08，默认关闭）

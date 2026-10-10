@@ -12,8 +12,6 @@ revision``; already stored dates are skipped.
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -45,20 +43,33 @@ def num(text: str) -> float | None:
         return None
 
 
+def _unquote(text: str | None) -> str:
+    text = (text or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        text = text[1:-1].replace('""', '"')
+    return text
+
+
 def parse(text: str, settlement: date) -> list[tuple[Any, ...]]:
+    """Pipe-separated rows; newer files quote every field, older ones quote none."""
+    lines = text.splitlines()
+    if not lines:
+        return []
+    head = [_unquote(h) for h in lines[0].split("|")]
     rows = []
-    for rec in csv.DictReader(io.StringIO(text), delimiter="|", quoting=csv.QUOTE_NONE):
-        sym = (rec.get("symbolCode") or "").strip()
+    for line in lines[1:]:
+        rec = dict(zip(head, (_unquote(x) for x in line.split("|")), strict=False))
+        sym = rec.get("symbolCode", "")
         if not sym:
             continue
         rows.append(
             (
                 settlement,
                 sym,
-                (rec.get("marketClassCode") or "").strip(),
+                rec.get("marketClassCode", ""),
                 num(rec.get("currentShortPositionQuantity", "")),
                 num(rec.get("averageDailyVolumeQuantity", "")),
-                (rec.get("revisionFlag") or "").strip(),
+                rec.get("revisionFlag", ""),
             )
         )
     return rows
