@@ -43,15 +43,24 @@ SIGNALS = (
     "ml_rank",
     "best_ideas",
     "earnings_drift",
+    "short_interest",
 )
 # scored over the whole cross-section from non-price data (fundamentals, insider filings)
-CROSS_SECTIONAL = ("quality_value", "insider_buying", "ml_rank", "best_ideas", "earnings_drift")
+CROSS_SECTIONAL = (
+    "quality_value",
+    "insider_buying",
+    "ml_rank",
+    "best_ideas",
+    "earnings_drift",
+    "short_interest",
+)
 STATS_KEY = {
     "quality_value": "fundamentals",
     "insider_buying": "insider",
     "ml_rank": "ml",
     "best_ideas": "best_ideas",
     "earnings_drift": "earnings",
+    "short_interest": "short_interest",
 }
 Scorer = Callable[[list[str], int], tuple[dict[str, float], dict[str, int]]]
 REQUIRED = ("name", "universe", "signal", "selection", "execution_lag_days", "inference")
@@ -72,6 +81,7 @@ def load_xs_contract(path: Path) -> dict[str, Any]:
         "ml_rank": "ml",
         "best_ideas": "best_ideas",
         "earnings_drift": "earnings",
+        "short_interest": "short_interest",
     }
     block = needs.get(raw["signal"]["name"])
     if block and block not in raw:
