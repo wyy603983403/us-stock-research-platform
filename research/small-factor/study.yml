@@ -1,0 +1,58 @@
+# 预先登记（2026-10-10，在计算任何收益之前写定）。改参数 = 新版本研究。
+# 背景：用户 2026-10-10 要求继续研究个股，四个方向都做（本项为第一个：中小盘）。
+# 标普 400/600 的历史成分股没有免费、可信的时点数据，直接选个股会有严重的幸存者偏差；
+# 因此用 Kenneth French 的小盘组合（NYSE 中位数以下市值，市值加权，含退市，1963 起）检验“小盘 + 动量/盈利”的因子溢价，
+# 实施可用现成的小盘因子 ETF（XSMO 小盘动量、XSHQ 小盘质量）。
+# 文献：动量与盈利溢价在小盘股中更强（Fama-French 2012；Gu-Kelly-Xiu 2020；Novy-Marx 2013）。
+schema_version: 1
+kind: small_factor
+name: small_factor_sleeve
+status: registered
+registered_at: 2026-10-10
+question: >
+  “小盘动量 + 小盘高盈利”各半（French SMALL HiPRIOR、SMALL HiOP，日度、市值加权，每月末恢复各半，每年扣 1.0% 实施摩擦）
+  在 1963-07 至 2025-12 的月度夏普比率，能否显著高于美国股市整体（French 市场组合 = Mkt-RF + RF，代表 SPY）？
+hypothesis: >
+  小盘股定价效率较低，动量与盈利能力溢价在小盘中更大且两者负相关，合成后风险调整收益高于市场。
+  主检验：组合月度夏普 − 市场月度夏普，配对移动块自助法 95% 区间下限 > 0。
+data:
+  source: >
+    Kenneth French 数据库日度 2×3 组合（6_Portfolios_ME_Prior_12_2_Daily 的 SMALL HiPRIOR、
+    6_Portfolios_ME_OP_2x3_daily 的 SMALL HiOP，市值加权）与 F-F_Research_Data_5_Factors_2x3_daily（Mkt-RF、RF）
+  start: 1963-07-01          # 盈利组合起点
+  end: 2025-12-31
+  implementation_etfs: {momentum: XSMO, quality: XSHQ}   # 雅虎复权收盘价；只用于可执行性核对
+rule:
+  parts: [small_hiprior, small_hiop]
+  weights: 各 0.5，每个自然月最后一个交易日收盘后恢复
+  implementation_drag_annual: 0.010   # ETF 费率约 0.3–0.4% + 小盘换手与冲击（French 组合不含成本）的假设；高于大盘研究的 0.5%
+benchmark:
+  primary: French 市场组合（Mkt-RF + RF，日度复利成月度）
+  also_report: [SPY（1994 起，复权）, 大盘同类组合 BIG HiPRIOR + BIG HiOP（同样扣 1.0%）, 小盘整体（SMALL 三组等权平均，不扣）]
+inference:
+  frequency: calendar_month
+  method: paired_moving_block_bootstrap_sharpe_difference
+  block_size_months: 6
+  resamples: 5000
+  confidence_level: 0.95
+  random_seed: 20261010
+risk:
+  max_worst_12m_loss: 0.50
+success_criteria:
+  - 组合月度夏普 − 市场月度夏普，95% 区间下限 > 0（主检验）
+  - 最差滚动 12 个月亏损不超过 50%
+  - Deflated Sharpe ≥ 0.95（计入试验登记中的全部试验，本研究为第 15 项）
+  - 独立第二实现逐月一致
+  - 可执行性：最近 60 个完整月（2021-01 至 2025-12），XSMO 与 SMALL HiPRIOR、XSHQ 与 SMALL HiOP 的月收益相关系数均 ≥ 0.90
+reporting:                     # 只报告，不参与晋级
+  subperiods: [[1963-07-01, 1999-12-31], [2000-01-01, 2025-12-31]]
+  variants: {momentum_only: small_hiprior, quality_only: small_hiop}
+  drag_sensitivity: [0.005, 0.015]
+  stats: [年化, 波动, 夏普, 最大回撤, 最差 12 月, 相对市场年化超额]
+limitations:
+  - French 组合不含交易成本与税；1.0%/年 的摩擦是假设，小盘动量实际换手很高
+  - SMALL 指 NYSE 中位数以下市值，市值加权后以较大的小盘股为主，与 S&P 600 不完全相同
+  - 小盘因子 ETF 历史短（XSHQ 2017 起），可执行性只能用近 5 年核对
+  - 方向是在大盘个股研究失败之后提出的；已有 14 组试验，门槛随试验数提高
+human_review:
+  approved: false

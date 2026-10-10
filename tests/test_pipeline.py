@@ -59,6 +59,10 @@ def test_repo_contracts_and_risk_config_are_valid() -> None:
             from us_stock_research.research.sleeve_mix import load_mix_contract
 
             assert load_mix_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
+        elif "kind: small_factor" in text:
+            from us_stock_research.research.small_factor import load_sf_contract
+
+            assert load_sf_contract(path)["risk"]["max_worst_12m_loss"] <= 0.50
         elif "kind: factor_sleeve" in text:
             from us_stock_research.research.factor_sleeve import load_fs_contract
 
