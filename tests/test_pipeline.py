@@ -3113,3 +3113,48 @@ def test_paper_rejection_keeps_alpaca_reason() -> None:
         assert "403" in str(exc) and "insufficient buying power" in str(exc)
     else:
         raise AssertionError("expected OrderRejected")
+
+
+def test_intraday_watch_and_weekly_report(tmp_path: Path) -> None:
+    import json as _json
+    from datetime import UTC, datetime
+
+    from us_stock_research.trading import watch, weekly
+
+    assert watch.new_levels(-0.031, []) == [-0.03]
+    assert watch.new_levels(-0.062, [-0.03]) == [-0.05]
+    assert (
+        watch.new_levels(-0.02, []) == [] and watch.new_levels(-0.08, [-0.03, -0.05, -0.07]) == []
+    )
+    msg = watch.message(-0.04, 744.0, 775.0, 2.0, None)
+    assert "-4.0%" in msg and "2.00 倍仓位，估计今日 -8.0%" in msg and "不卖出现有持仓" in msg
+    assert watch.in_session(datetime(2026, 10, 12, 15, 0, tzinfo=UTC))  # Mon 11:00 New York
+    assert not watch.in_session(datetime(2026, 10, 10, 15, 0, tzinfo=UTC))  # Saturday
+    curves = [
+        {"d": "2026-10-02", "portfolio": 100.0, "model": 100.0, "spy": 100.0},
+        {"d": "2026-10-05", "portfolio": 102.0, "model": 102.2, "spy": 101.0},
+        {"d": "2026-10-09", "portfolio": 103.02, "model": 103.0, "spy": 101.5},
+    ]
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts/status.json").write_text(
+        _json.dumps(
+            {
+                "day": "2026-10-09",
+                "curves": curves,
+                "portfolio": {"nav": 103020.0, "drawdown": 0.0},
+                "signal": {
+                    "distance_to_sma": 0.077,
+                    "target_exposure": 2.0,
+                    "current_exposure": 1.98,
+                },
+                "orders": [
+                    {"signal_day": "2026-10-06", "side": "BUY", "symbol": "SSO", "shares": 1383}
+                ],
+                "attention": [],
+            }
+        )
+    )
+    text = weekly.build(tmp_path, date(2026, 10, 9))
+    assert "【模拟盘】" in text and "本周：账户 +3.02%" in text and "SPY +1.50%" in text
+    assert "本周订单：2026-10-06 买 SSO 1383 股" in text and "距 200 日线 +7.7%" in text
+    assert "【实盘】" not in text  # not started yet

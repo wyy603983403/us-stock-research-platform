@@ -97,4 +97,6 @@
     都从这里取策略名；vt_plus_defensive 停止运行（订单与演练账本保留）。当时模型敞口 2.0 倍（100% SSO）。
 47. 手机指令（用户 2026-10-08 同意）：usr-commands（ntfy 指令频道 NTFY_CMD_TOPIC，只认“状态 / 停止”）+ 通知上的两个按钮；
     停止文件 portfolio/STOP_TRADING 现在也拦住模拟盘下单；恢复只在 Mac：scripts/control.sh resume。
+48. 2026-10-09/10 首批 vt_only 运行暴露：21:15 ET 雅虎数据未出、模型起点前数据导致崩溃、Alpaca 403 无原因、个股读不到 .env。
+    已修（ae42ee6）；tools/rehearse_server.py 离线彩排每日流程（13 项检查）；usr-watch 盘中大跌预警、usr-weekly 周报。
 

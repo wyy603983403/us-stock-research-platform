@@ -192,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     check("d2 no traceback", traceback_free(log), log[-800:])
     # 3. data end before the signal day: reduce-only / waiting, no crash
     log, note = run_day(app, D3, "d3")
+    check("d3 weekly report", "周报" in note and "【模拟盘】" in note, note[-500:])
     check(
         "d3 stale handled",
         traceback_free(log) and ("只减仓" in note or "不出单" in log),

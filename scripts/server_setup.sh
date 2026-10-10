@@ -82,6 +82,24 @@ RestartSec=30
 [Install]
 WantedBy=multi-user.target
 UNIT
+cat > /etc/systemd/system/usr-watch.service <<UNIT
+[Unit]
+Description=Intraday SPY drop alert (notification only, never trades)
+After=network-online.target
+[Service]
+Type=oneshot
+User=usrtrade
+WorkingDirectory=$APP
+ExecStart=$APP/.venv/bin/usr-watch
+UNIT
+cat > /etc/systemd/system/usr-watch.timer <<UNIT
+[Unit]
+Description=Every 15 minutes during the New York session
+[Timer]
+OnCalendar=Mon..Fri 09..16:00/15 America/New_York
+[Install]
+WantedBy=timers.target
+UNIT
 cat > /etc/systemd/system/usr-dashboard.service <<UNIT
 [Unit]
 Description=Trading dashboard (static page, localhost only; open through an SSH tunnel)
@@ -97,6 +115,7 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now usr-trade.timer >/dev/null
 systemctl enable --now usr-dashboard.service >/dev/null
+systemctl enable --now usr-watch.timer >/dev/null 2>&1 || echo "盘中预警定时器启动失败"
 systemctl enable usr-commands.service >/dev/null 2>&1; systemctl restart usr-commands.service || echo "手机指令服务启动失败（见 journalctl -u usr-commands）"
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"

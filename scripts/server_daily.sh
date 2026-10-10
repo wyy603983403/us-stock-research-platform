@@ -127,6 +127,16 @@ if [ -n "$NOTE" ] || [ ! -f "$FIRST" ]; then
 $(echo "$ST_OUT" | head -n 1)"
   touch "$FIRST"
 fi
+# 周报：每周最后一个交易日之后发一次（单独一条）
+NEXT=$(.venv/bin/python -c "from datetime import date, timedelta
+from us_stock_research.calendar import is_trading_day
+d = date.fromisoformat('$LASTDAY') + timedelta(days=1)
+while not is_trading_day(d): d += timedelta(days=1)
+print(int(d.isocalendar()[1] != date.fromisoformat('$LASTDAY').isocalendar()[1]))")
+if [ "$NEXT" = "1" ] && [ ! -f "artifacts/.weekly_$LASTDAY" ]; then
+  bash scripts/notify.sh "美股交易系统 周报（截至 $LASTDAY）" "$(.venv/bin/usr-weekly --day "$LASTDAY" 2>&1 | head -n 40)"
+  touch "artifacts/.weekly_$LASTDAY"
+fi
 # 运行记录推送到私有仓库（未配置时跳过）；仓库里的定时检查负责漏跑报警
 bash scripts/server_backup.sh 2>&1 | tail -n 1
 echo "== $(date '+%F %T %Z') 完成"
