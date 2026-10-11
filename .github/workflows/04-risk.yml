@@ -16,8 +16,11 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER == 'github' && 'ubuntu-latest' || fromJSON('["self-hosted", "macOS", "usr"]') }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        env:
+          # self-hosted Mac: install Python into the runner's own tool cache, not /Users/runner
+          AGENT_TOOLSDIRECTORY: ${{ runner.tool_cache }}
         with:
           python-version: "3.11"
           cache: pip
