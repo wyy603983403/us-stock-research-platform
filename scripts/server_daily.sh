@@ -32,8 +32,14 @@ HOLD=""; [ -f "$LEDGER" ] && HOLD="--holdings $LEDGER"
 LASTDAY=${USR_ASOF:-$(.venv/bin/python -c "from datetime import UTC, datetime
 from us_stock_research.quality.intraday import last_closed_session
 print(last_closed_session(datetime.now(UTC)).isoformat())")}
+# 模拟盘也留现金缓冲（2026-10-09 买单因 Alpaca 按略高价格估算成本差 $7 被拒：403 insufficient buying power）
+BUF=""
+if [ "$PAPER_ON" = "True" ]; then
+  PAPER_BUFFER=$(.venv/bin/python -c "import yaml;print((yaml.safe_load(open('configs/paper_broker.yml')) or {}).get('cash_buffer') or 0)" 2>/dev/null)
+  BUF="--cash-buffer ${PAPER_BUFFER:-0}"
+fi
 LT_OUT=$(.venv/bin/usr-mix-intent --contract $CONTRACT --as-of "$LASTDAY" --model-start $MODEL_START \
-  --breaker 0.40 $HOLD 2>&1 | tail -n 1) || LT_OUT="生成失败"
+  --breaker 0.40 $BUF $HOLD 2>&1 | tail -n 1) || LT_OUT="生成失败"
 echo "$LT_OUT"
 # 新订单清单：另一套代码独立复核，核对表写进清单 .md，结果附在通知里
 VERIFY=""

@@ -5,3 +5,4 @@
 enabled: true
 study: vt_only                                  # 与 configs/operating.yml 一致（2026-10-08 起）
 holdings: portfolio/paper/vt_only.yml
+cash_buffer: 0.01                               # 买单按账户 99% 计算（同 configs/live.yml）；2026-10-09 满仓买单因差 $7 被 Alpaca 拒绝
