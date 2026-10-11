@@ -10,8 +10,11 @@ concurrency:
   cancel-in-progress: true
 jobs:
   quality:
-    # GitHub-hosted runner (2026-10-07): the self-hosted Mac runner was offline, so CI never ran
-    runs-on: ubuntu-latest
+    # 用户 2026-10-11：GitHub 免费额度用完，改用 Mac 上的自建 runner（标签 usr，scripts/mac_install_runner.sh）。
+    # 仓库变量 CI_RUNNER=github 时改回 GitHub 托管的 ubuntu-latest。
+    # 公开仓库：fork 来的 PR 不在本机运行（本机有 .env 密钥和服务器 SSH 密钥）。
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ vars.CI_RUNNER == 'github' && 'ubuntu-latest' || fromJSON('["self-hosted", "macOS", "usr"]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
