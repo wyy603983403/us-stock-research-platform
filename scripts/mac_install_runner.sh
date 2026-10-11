@@ -4,7 +4,7 @@
 #
 # 1. 浏览器打开 https://github.com/wyy603983403/us-stock-research-platform/settings/actions/runners/new
 #    页面 “Configure” 一节里有一行 ./config.sh --url ... --token XXXXX，复制其中的 token（1 小时内有效，只用于登记）
-# 2. bash scripts/mac_install_runner.sh <token>
+# 2. bash scripts/mac_install_runner.sh        （运行后按提示粘贴 token，回车；粘贴时屏幕不显示）
 #
 # 卸载：bash scripts/mac_install_runner.sh --remove <token>（token 同样在上面的页面取，选 Remove 时显示）
 # 安全：本仓库是公开的，工作流里已限制 fork 来的 PR 不在本机运行；另建议在仓库 Settings → Actions →
@@ -24,7 +24,12 @@ if [ "${1:-}" = "--remove" ]; then
   exit 0
 fi
 TOKEN="${1:-}"
-[ -n "$TOKEN" ] || { sed -n '2,12p' "$0"; exit 1; }
+if [ -z "$TOKEN" ]; then
+  echo "打开 $REPO_URL/settings/actions/runners/new ，复制 ./config.sh 那一行里 --token 后面的那串字符"
+  read -rsp "粘贴 token 后回车（屏幕不显示）： " TOKEN; echo
+fi
+TOKEN="${TOKEN//[<> ]/}"
+[ -n "$TOKEN" ] || { echo "没有收到 token，已退出"; exit 1; }
 
 case "$(uname -m)" in
   arm64) ARCH=osx-arm64 ;;
