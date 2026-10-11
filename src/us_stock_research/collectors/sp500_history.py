@@ -308,6 +308,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", type=Path, help="local copy of the membership CSV")
     parser.add_argument("--since", type=date.fromisoformat, default=date(2000, 1, 1))
     parser.add_argument("--delisted", action="store_true", help="fetch former members (Tiingo)")
+    parser.add_argument(
+        "--membership-only",
+        action="store_true",
+        help="only refresh meta/sp500_history (weekly job); leave meta/sp500_coverage untouched",
+    )
     parser.add_argument("--pause", type=float, default=1.0)
     parser.add_argument("--wait-minutes", type=float, default=61)
     parser.add_argument(
@@ -340,6 +345,11 @@ def main(argv: list[str] | None = None) -> int:
             [[h[0] for h in history], [h[1] for h in history], [h[2] for h in history]],
             "symbol, start_date",
         )
+    if args.membership_only:
+        print(json.dumps({"dry_run": not args.execute, "membership_rows": len(rows),
+                          "last": rows[-1][0].isoformat(), "intervals": len(history),
+                          "members_last_row": len(rows[-1][1])}, ensure_ascii=False))  # fmt: skip
+        return 0
     relevant = [h for h in history if h[2] is None or h[2] > args.since]
     have = set(daily.symbols())
     missing = [h for h in relevant if h[0] not in have]

@@ -3,7 +3,8 @@
 #   1 日线：给库里所有标的补最新交易日；分红/拆股导致复权价被雅虎重述时自动整段重下
 #   2 宏观序列（FRED）
 #   3 分钟线（Alpaca，从上次最后一根续传，只到已收盘的交易日）
-#   4 每周一：拆股记录、Fama-French 因子
+#   4 每周一：拆股记录、Fama-French 因子、标普 500 新成员日线与成分历史、FINRA 空头仓位；
+#     每月第一个周一另加 SEC 财报/内部人交易新季度和代码→SEC 编号
 #   5 质量门禁 + 数据目录
 #   6 每月最后一个交易日之后：趋势基线订单意向演练（只写文件，不下单）
 #   7 每个交易日：组合 vt_plus_defensive（用户 2026-10-04 批准；需要调仓才出订单；先记账再出单）
@@ -14,6 +15,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 [ -x .venv/bin/python ] || { echo "请先运行 bash scripts/mac_bootstrap.sh"; exit 1; }
+# 代码新增了命令（pyproject.toml 的 [project.scripts]）时，重新安装一次让命令可用
+[ -x .venv/bin/usr-collect-short ] || .venv/bin/pip install -q -e . >/dev/null 2>&1 || true
 # 数据卷没挂载就不更新，避免悄悄写到别处
 ROOT="$(grep '^USR_STORAGE_ROOT=' .env 2>/dev/null | cut -d= -f2- || true)"
 if [ -n "$ROOT" ] && [ ! -d "$ROOT" ]; then echo "数据卷未挂载：$ROOT，已跳过更新"; exit 0; fi
@@ -56,6 +59,22 @@ if [ "$(date +%u)" = "1" ]; then
   .venv/bin/usr-collect-splits --yahoo-delisted --execute --report artifacts/extras/splits.json 2>/dev/null | tail -n 4 || true
   .venv/bin/usr-collect-factors --execute --report artifacts/extras/factors.json >/dev/null \
     && echo "  因子已更新" || echo "  因子下载失败"
+  echo "== 每周：标普 500 成分变动、FINRA 空头仓位"
+  # 新纳入的成分股补下全部历史日线（已有的跳过），之后由每日增量维护；成分历史表同步更新
+  .venv/bin/usr-collect-universe sp500 --execute --report artifacts/universe/sp500_weekly.json \
+    >/dev/null 2>&1 && echo "  成分股日线：新成员已补下" || echo "  成分股日线：部分失败，见 artifacts/universe/sp500_weekly.json"
+  .venv/bin/usr-collect-sp500-history --membership-only --execute 2>/dev/null | tail -n 1 || echo "  成分历史下载失败"
+  .venv/bin/usr-collect-short --start "$(date -v-40d +%Y-%m-%d)" --execute 2>/dev/null \
+    | tr -d '\n' | sed 's/^/  FINRA：/'; echo
+  if [ "$(date +%d)" -le 7 ]; then
+    echo "== 每月：SEC 财报数据集与内部人交易（只下新季度）、代码→SEC 编号"
+    grep -q '^SEC_USER_AGENT=' .env && {
+      .venv/bin/usr-collect-sec-bulk --what both --execute --report artifacts/extras/sec_bulk.json \
+        2>>logs/sec_bulk_monthly.log | tail -n 3
+      .venv/bin/usr-build-cik-map --since 2006-01-01 --report artifacts/extras/ticker_cik.json >/dev/null 2>&1 \
+        && echo "  代码→SEC 编号已更新"
+    } || echo "  .env 没有 SEC_USER_AGENT，跳过"
+  fi
 fi
 
 echo "== 质量门禁与数据目录"
