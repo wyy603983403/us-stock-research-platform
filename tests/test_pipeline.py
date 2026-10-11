@@ -3403,3 +3403,82 @@ def test_exclude_top_fraction_drops_worst_scored_only() -> None:
     m = months[0]
     assert m["dropped"] == ["A7", "A8", "A9"]  # ceil(25% x 10 scored), highest "days to cover"
     assert m["picks"] == 8  # A0..A6 plus the unscored NONE
+
+
+def test_sec_13f_and_ftd_parsers_and_merge(tmp_path: Path) -> None:
+    import io
+    import zipfile
+
+    pytest.importorskip("duckdb")
+    from us_stock_research.collectors import sec_13f as m
+
+    def zipped(files: dict[str, str]) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for name, text in files.items():
+                z.writestr(name, text)
+        return buf.getvalue()
+
+    head = "SETTLEMENT DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE\n"
+    body = (
+        "20260803|111|AAA|5|A INC|1\n20260810|111|AAA|5|A INC|1\n"
+        '20260805|222|BBB|5|B "X" CO|1\n20260806||CCC|1|x|1\nTrailer total 9\n'
+    )
+    ftd = zipped({"cnsfails202608a.txt": head + body})
+    rows = m.parse_ftd(ftd)
+    assert sorted(rows) == [("111", "AAA", date(2026, 8, 10)), ("222", "BBB", date(2026, 8, 5))]
+    old = [("111", "AAA", date(2026, 7, 30)), ("111", "AAA", date(2026, 8, 3))]
+    merged = m.merge_ftd(old, rows)
+    assert merged == [("111", "AAA", date(2026, 7, 30)), ("111", "AAA", date(2026, 8, 10)),
+                      ("222", "BBB", date(2026, 8, 5))]  # fmt: skip
+    assert m.merge_ftd(merged, rows) == merged  # re-processing a file changes nothing
+
+    sub = ("ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT\n"
+           "A1\t14-NOV-2019\t13F-HR\t0000000007\t30-SEP-2019\n"
+           "A2\t15-NOV-2019\t13F-HR/A\t0000000008\t30-SEP-2019\n")  # fmt: skip
+    info = ("ACCESSION_NUMBER\tCUSIP\tVALUE\tSSHPRNAMTTYPE\tPUTCALL\n"
+            "A1\tabc123\t10\tSH\t\nA1\tABC123\t5\tSH\t\nA1\tABC123\t99\tSH\tPut\n"
+            "A1\tABC123\t7\tPRN\t\nA1\tZZZ999\t3\tSH\t\nA2\tABC123\t1\tSH\t\n"
+            'A1\tDEF456\t2\tSH\t\n')  # fmt: skip
+    zf = zipped({"sub/SUBMISSION.tsv": sub, "sub/INFOTABLE.tsv": info})
+    got = sorted(m.parse_13f(zf, {"ABC123", "DEF456"}))
+    filed, period = date(2019, 11, 14), date(2019, 9, 30)
+    assert got == [
+        ("A1", 7, "13F-HR", filed, period, "ABC123", 15.0),
+        ("A1", 7, "13F-HR", filed, period, "DEF456", 2.0),
+    ]
+    assert (
+        m.f13_key("https://www.sec.gov/x/01jun2026-31aug2026_form13f.zip") == "01jun2026-31aug2026"
+    )
+    assert m.ftd_period("https://www.sec.gov/x/cnsfails202609a.zip") == "202609a"
+
+
+def test_sec_8k_update_fetches_only_new_pages(tmp_path: Path) -> None:
+    import httpx
+
+    from us_stock_research.collectors import sec_8k
+
+    asked: list[str] = []
+    recent = {"form": ["8-K", "10-Q"], "accessionNumber": ["n1", "n2"],
+              "filingDate": ["2026-10-01", "2026-09-30"], "items": ["2.02", ""]}  # fmt: skip
+    pages = {
+        "p1.json": {"form": ["8-K"], "accessionNumber": ["n0"], "filingDate": ["2026-09-20"],
+                    "items": ["2.02"]},
+        "p2.json": {"form": ["8-K"], "accessionNumber": ["o1"], "filingDate": ["2026-01-05"],
+                    "items": ["2.02"]},
+    }  # fmt: skip
+    top = {"filings": {"recent": recent, "files": [
+        {"name": "p1.json", "filingFrom": "2026-09-01", "filingTo": "2026-09-29"},
+        {"name": "p2.json", "filingFrom": "2025-01-01", "filingTo": "2026-02-01"}]}}  # fmt: skip
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        name = req.url.path.rsplit("/", 1)[-1]
+        asked.append(name)
+        return httpx.Response(200, json=top if name.startswith("CIK") else pages[name])
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        rows = sec_8k.fetch_cik(client, 7, 0.0, since=date(2026, 3, 1))
+        assert asked == ["CIK0000000007.json", "p1.json"]  # p2 ends before the stored newest
+        assert [r[1] for r in rows] == ["n1", "n0"]
+        asked.clear()
+        assert len(sec_8k.fetch_cik(client, 7, 0.0)) == 3 and len(asked) == 3

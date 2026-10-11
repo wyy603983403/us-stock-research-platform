@@ -3,8 +3,8 @@
 #   1 日线：给库里所有标的补最新交易日；分红/拆股导致复权价被雅虎重述时自动整段重下
 #   2 宏观序列（FRED）
 #   3 分钟线（Alpaca，从上次最后一根续传，只到已收盘的交易日）
-#   4 每周一：拆股记录、Fama-French 因子、标普 500 新成员日线与成分历史、FINRA 空头仓位；
-#     每月第一个周一另加 SEC 财报/内部人交易新季度和代码→SEC 编号
+#   4 每周一次（本周第一次运行时）：拆股记录、Fama-French 因子、标普 500 新成员日线与成分历史、FINRA 空头仓位；
+#     每月一次（本月第一次跑每周任务时）另加 SEC 财报/内部人交易新季度、代码→SEC 编号、8-K 新申报、交割失败 CUSIP 对照、13F 新季度
 #   5 质量门禁 + 数据目录
 #   6 每月最后一个交易日之后：趋势基线订单意向演练（只写文件，不下单）
 #   7 每个交易日：组合 vt_plus_defensive（用户 2026-10-04 批准；需要调仓才出订单；先记账再出单）
@@ -16,7 +16,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 [ -x .venv/bin/python ] || { echo "请先运行 bash scripts/mac_bootstrap.sh"; exit 1; }
 # 代码新增了命令（pyproject.toml 的 [project.scripts]）时，重新安装一次让命令可用
-[ -x .venv/bin/usr-collect-short ] || .venv/bin/pip install -q -e . >/dev/null 2>&1 || true
+[ -x .venv/bin/usr-collect-13f ] || .venv/bin/pip install -q -e . >/dev/null 2>&1 || true
 # 数据卷没挂载就不更新，避免悄悄写到别处
 ROOT="$(grep '^USR_STORAGE_ROOT=' .env 2>/dev/null | cut -d= -f2- || true)"
 if [ -n "$ROOT" ] && [ ! -d "$ROOT" ]; then echo "数据卷未挂载：$ROOT，已跳过更新"; exit 0; fi
@@ -54,7 +54,10 @@ if grep -q '^ALPACA_KEY_ID=' .env 2>/dev/null; then
     --report "artifacts/intraday/alpaca_${STAMP}.json" 2>>logs/daily_intraday.err | tail -n 8 || true
 fi
 
-if [ "$(date +%u)" = "1" ]; then
+# 每周、每月任务各只成功跑一次（标记文件在 artifacts/extras/）；那天没开机就在本周/本月下一次运行时补上
+WEEK_MARK="artifacts/extras/.weekly_$(date +%G-W%V)"
+MONTH_MARK="artifacts/extras/.monthly_$(date +%Y-%m)"
+if [ ! -e "$WEEK_MARK" ]; then
   echo "== 每周：拆股记录、因子"
   .venv/bin/usr-collect-splits --yahoo-delisted --execute --report artifacts/extras/splits.json 2>/dev/null | tail -n 4 || true
   .venv/bin/usr-collect-factors --execute --report artifacts/extras/factors.json >/dev/null \
@@ -66,13 +69,20 @@ if [ "$(date +%u)" = "1" ]; then
   .venv/bin/usr-collect-sp500-history --membership-only --execute 2>/dev/null | tail -n 1 || echo "  成分历史下载失败"
   .venv/bin/usr-collect-short --start "$(date -v-40d +%Y-%m-%d)" --execute 2>/dev/null \
     | tr -d '\n' | sed 's/^/  FINRA：/'; echo
-  if [ "$(date +%d)" -le 7 ]; then
+  touch "$WEEK_MARK"
+  if [ ! -e "$MONTH_MARK" ]; then
     echo "== 每月：SEC 财报数据集与内部人交易（只下新季度）、代码→SEC 编号"
     grep -q '^SEC_USER_AGENT=' .env && {
       .venv/bin/usr-collect-sec-bulk --what both --execute --report artifacts/extras/sec_bulk.json \
         2>>logs/sec_bulk_monthly.log | tail -n 3
       .venv/bin/usr-build-cik-map --since 2006-01-01 --report artifacts/extras/ticker_cik.json >/dev/null 2>&1 \
         && echo "  代码→SEC 编号已更新"
+      echo "== 每月：8-K 业绩公告索引（只取新申报）、交割失败 CUSIP 对照、13F 新季度"
+      .venv/bin/usr-collect-8k --update --budget-seconds 3000 --execute 2>>logs/sec_8k_monthly.log \
+        | tr -d '\n' | sed 's/^/  8-K：/'; echo
+      .venv/bin/usr-collect-13f --what both --execute 2>>logs/sec_13f_monthly.log \
+        | tr -d '\n' | sed 's/^/  13F：/'; echo
+      touch "$MONTH_MARK"
     } || echo "  .env 没有 SEC_USER_AGENT，跳过"
   fi
 fi

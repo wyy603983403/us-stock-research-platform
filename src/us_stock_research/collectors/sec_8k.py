@@ -8,6 +8,7 @@ User-Agent (``SEC_USER_AGENT`` in .env) and at most 10 requests per second.
 
     usr-collect-8k --execute [--budget-seconds 160] [--refresh]
     usr-collect-8k --execute --from-raw DIR   # parse saved responses instead of downloading
+    usr-collect-8k --execute --update --budget-seconds 3000   # monthly: new filings of all filers
 
 Stops cleanly when the time budget is used up; run it again to continue. ``--from-raw`` reads
 ``CIK##########.json.gz`` files holding ``{"top": <submissions JSON>, "pages": {name: JSON}}``
@@ -67,7 +68,12 @@ def parse_block(cik: int, block: dict[str, Any]) -> list[tuple[Any, ...]]:
     return out
 
 
-def fetch_cik(client: httpx.Client, cik: int, pause: float) -> list[tuple[Any, ...]]:
+def fetch_cik(
+    client: httpx.Client, cik: int, pause: float, since: date | None = None
+) -> list[tuple[Any, ...]]:
+    """All 8-K rows of a filer; with ``since`` only the pages that reach back to that date
+    (the ``recent`` block holds the last 1,000 filings, a few weeks for the busiest filers)."""
+
     def get(name: str) -> dict[str, Any]:
         for attempt in range(4):
             r = client.get(BASE + name)
@@ -84,6 +90,8 @@ def fetch_cik(client: httpx.Client, cik: int, pause: float) -> list[tuple[Any, .
     filings = top.get("filings") or {}
     rows = parse_block(cik, filings.get("recent") or {})
     for page in filings.get("files") or []:
+        if since is not None and str(page.get("filingTo") or "9999") < since.isoformat():
+            continue
         rows += parse_block(cik, get(str(page["name"])))
     return dedupe(rows)
 
@@ -134,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--budget-seconds", type=float, default=160)
     parser.add_argument("--pause", type=float, default=0.12)
     parser.add_argument("--from-raw", type=Path)
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="filers already stored: fetch only filings since their newest stored one and merge",
+    )
     args = parser.parse_args(argv)
     settings = load_settings()  # also loads .env
     if args.from_raw:
@@ -148,14 +161,19 @@ def main(argv: list[str] | None = None) -> int:
     ciks = sorted({int(c) for (c,) in store.read("meta", "ticker_cik", "cik") if c is not None})
     start = time.monotonic()
     done, skipped, failed = 0, 0, {}
-    todo = [c for c in ciks if args.refresh or not store.has(KIND, key_of(c))]
+    todo = [c for c in ciks if args.refresh or args.update or not store.has(KIND, key_of(c))]
     skipped = len(ciks) - len(todo)
     with httpx.Client(timeout=60, headers={"User-Agent": agent}, follow_redirects=True) as client:
         for cik in todo:
             if time.monotonic() - start > args.budget_seconds:
                 break
+            old: list[tuple[Any, ...]] = []
+            since = None
+            if args.update and not args.refresh and store.has(KIND, key_of(cik)):
+                old = [tuple(r) for r in store.read(KIND, key_of(cik), ", ".join(SCHEMA))]
+                since = max((r[3] for r in old), default=None)
             try:
-                rows = fetch_cik(client, cik, args.pause)
+                rows = dedupe(fetch_cik(client, cik, args.pause, since) + old)
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 failed[key_of(cik)] = f"{type(exc).__name__}: {exc}"[:200]
                 continue
