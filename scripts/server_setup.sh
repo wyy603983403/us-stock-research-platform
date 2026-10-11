@@ -119,7 +119,7 @@ systemctl enable --now usr-watch.timer >/dev/null 2>&1 || echo "盘中预警定�
 systemctl enable usr-commands.service >/dev/null 2>&1; systemctl restart usr-commands.service || echo "手机指令服务启动失败（见 journalctl -u usr-commands）"
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"
-echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/$TOPIC）"
+echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/${TOPIC}）"
 if systemctl is-active --quiet usr-web.service 2>/dev/null; then
   WEB=$(grep -m1 -oE '^https://[^ {]+' /etc/caddy/Caddyfile 2>/dev/null || true)
   echo "监控网页：${WEB:-见 /etc/caddy/Caddyfile}/dashboard.html（密码登录；改密码在 Mac 运行 scripts/server_web.sh）"

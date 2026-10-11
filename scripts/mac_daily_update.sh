@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 [ -x .venv/bin/usr-collect-13f ] || .venv/bin/pip install -q -e . >/dev/null 2>&1 || true
 # 数据卷没挂载就不更新，避免悄悄写到别处
 ROOT="$(grep '^USR_STORAGE_ROOT=' .env 2>/dev/null | cut -d= -f2- || true)"
-if [ -n "$ROOT" ] && [ ! -d "$ROOT" ]; then echo "数据卷未挂载：$ROOT，已跳过更新"; exit 0; fi
+if [ -n "$ROOT" ] && [ ! -d "$ROOT" ]; then echo "数据卷未挂载：${ROOT}，已跳过更新"; exit 0; fi
 
 mkdir -p artifacts/universe artifacts/intraday artifacts/extras logs
 STAMP="$(date +%Y%m%d)"
@@ -152,7 +152,7 @@ else
   NOTE=""
   case "$LT_OUT" in *"订单 0 笔"*) ;; *"订单"*) NOTE="有新订单：${LT_OUT}";; *) NOTE="订单生成异常：${LT_OUT}";; esac
   case "$LT_OUT" in *"只减仓"*) NOTE="只减仓：${LT_OUT}";; esac
-  [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
+  [ "$ST_RC" = "3" ] && NOTE="${NOTE:+${NOTE}；}$(echo "$ST_OUT" | grep '需要关注' | head -n 1)"
   # 同时推到手机（.env 配了 FEISHU_WEBHOOK / NTFY_TOPIC / BARK_KEY 才发）
   [ -n "$NOTE" ] && bash scripts/notify.sh "美股交易系统 $LASTDAY" "$NOTE" >/dev/null 2>&1
   if [ -n "$NOTE" ] && command -v osascript >/dev/null; then

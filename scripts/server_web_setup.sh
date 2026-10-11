@@ -122,9 +122,9 @@ echo "-- 自检"
 sleep 3
 CODE_NOAUTH=$(curl -sk --connect-to "::127.0.0.1:$PORT" -o /dev/null -w '%{http_code}' \
   "https://$SITE:$PORT/dashboard.html" || true)
-echo "  未带密码访问：HTTP $CODE_NOAUTH（应为 401）"
+echo "  未带密码访问：HTTP ${CODE_NOAUTH}（应为 401）"
 systemctl is-active --quiet usr-web.service && echo "  usr-web 运行中" || { journalctl -u usr-web -n 30 --no-pager; exit 1; }
 [ -f /opt/usr-trade/state/artifacts/dashboard.html ] \
   || echo "  注意：还没有 dashboard.html（第一次运行流水线后生成：systemctl start usr-trade.service）"
 URL="https://$SITE"; [ "$PORT" = 443 ] || URL="$URL:$PORT"
-echo "完成：$URL  （用户名 $WEB_USER）"
+echo "完成：$URL  （用户名 ${WEB_USER}）"

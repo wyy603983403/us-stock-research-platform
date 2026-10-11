@@ -51,5 +51,5 @@ if [ -n "$BARK" ]; then
     -d "$("$PY" -c 'import json,sys;print(json.dumps({"title":sys.argv[1],"body":sys.argv[2]}))' "$TITLE" "$BODY")" \
     >/dev/null || echo "Bark 发送失败"
 fi
-[ -z "$FEISHU$TOPIC$BARK" ] && echo "（未配置通知）$TITLE：$BODY"
+[ -z "$FEISHU$TOPIC$BARK" ] && echo "（未配置通知）${TITLE}：$BODY"
 exit 0

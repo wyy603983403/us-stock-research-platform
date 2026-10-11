@@ -104,7 +104,7 @@ case "$VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 独立复核未�
 $NOTE";; esac
 case "$LIVE_OUT" in ""|*"订单 0 笔"*) ;; *)
   NOTE="${NOTE:+$NOTE
-}【实盘·嘉信手动】$LIVE_OUT（以最新清单为准，之前未执行的清单作废；$([ "$SW_READ" = "True" ] && echo "成交会自动记账" || echo "成交后用 scripts/live.sh fill 记录")）";; esac
+}【实盘·嘉信手动】${LIVE_OUT}（以最新清单为准，之前未执行的清单作废；$([ "$SW_READ" = "True" ] && echo "成交会自动记账" || echo "成交后用 scripts/live.sh fill 记录")）";; esac
 case "$LIVE_VERIFY" in ""|独立复核：一致) ;; *) NOTE="⚠️ 实盘清单独立复核未通过，已搁置，请勿下单
 $NOTE";; esac
 [ -n "$LIVE_ST" ] && NOTE="${NOTE:+$NOTE
@@ -118,7 +118,7 @@ case "$SW_SNAP" in *不一致*|*出错*|*授权*) NOTE="${NOTE:+$NOTE
 case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
 }【个股】$STK_OUT";; esac
 [ -n "$STK_SCREEN" ] && NOTE="${NOTE:+$NOTE
-}【个股】$STK_SCREEN（bash scripts/stocks.sh screen 查看）"
+}【个股】${STK_SCREEN}（bash scripts/stocks.sh screen 查看）"
 case "$PAPER_SUBMIT" in *被拒绝*|*Traceback*|*Error*) NOTE="⚠️ $(echo "$PAPER_SUBMIT" | grep -m1 -E '拒绝|Error')
 $NOTE";; *'"status"'*) NOTE="${NOTE:+$NOTE
 }模拟单已提交（收盘价成交）";; esac
@@ -140,7 +140,7 @@ d = date.fromisoformat('$LASTDAY') + timedelta(days=1)
 while not is_trading_day(d): d += timedelta(days=1)
 print(int(d.isocalendar()[1] != date.fromisoformat('$LASTDAY').isocalendar()[1]))")
 if [ "$NEXT" = "1" ] && [ ! -f "artifacts/.weekly_$LASTDAY" ]; then
-  bash scripts/notify.sh "美股交易系统 周报（截至 $LASTDAY）" "$(.venv/bin/usr-weekly --day "$LASTDAY" 2>&1 | head -n 40)"
+  bash scripts/notify.sh "美股交易系统 周报（截至 ${LASTDAY}）" "$(.venv/bin/usr-weekly --day "$LASTDAY" 2>&1 | head -n 40)"
   touch "artifacts/.weekly_$LASTDAY"
 fi
 # 运行记录推送到私有仓库（未配置时跳过）；仓库里的定时检查负责漏跑报警
