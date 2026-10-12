@@ -3482,3 +3482,20 @@ def test_sec_8k_update_fetches_only_new_pages(tmp_path: Path) -> None:
         assert [r[1] for r in rows] == ["n1", "n0"]
         asked.clear()
         assert len(sec_8k.fetch_cik(client, 7, 0.0)) == 3 and len(asked) == 3
+
+
+def test_update_retries_403_and_skips_retired(tmp_path: Path) -> None:
+    import httpx
+
+    from us_stock_research.collectors import update as up
+
+    req = httpx.Request("GET", "https://x")
+    assert up._transient(httpx.HTTPStatusError("t", request=req, response=httpx.Response(403)))
+    assert up._transient(httpx.HTTPStatusError("t", request=req, response=httpx.Response(429)))
+    assert not up._transient(httpx.HTTPStatusError("t", request=req, response=httpx.Response(404)))
+    cfg = tmp_path / "ex.yml"
+    cfg.write_text('retired:\n  wbd: {last_day: "2026-10-06", reason: "acquired"}\n')
+    assert up.load_retired(cfg) == {"WBD": {"last_day": "2026-10-06", "reason": "acquired"}}
+    assert up.load_retired(tmp_path / "missing.yml") == {}
+    real = up.load_retired(ROOT / "configs/quality_exceptions.yml")
+    assert real["WBD"]["last_day"] == "2026-10-06"

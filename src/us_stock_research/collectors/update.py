@@ -124,10 +124,22 @@ def _use_alt(
         alt_errors[symbol] = f"{type(exc).__name__}: {exc}"[:200]
 
 
+def load_retired(path: Path | None) -> dict[str, dict[str, str]]:
+    """``retired:`` in quality_exceptions.yml: symbol -> {last_day, reason} (no more updates)."""
+    import yaml
+
+    if path is None or not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text()) or {}
+    return {str(k).upper(): {kk: str(vv) for kk, vv in (v or {}).items()}
+            for k, v in (raw.get("retired") or {}).items()}  # fmt: skip
+
+
 def _transient(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
-        return code == 429 or code >= 500
+        # Yahoo answers bursts with 403 as well as 429 (2026-10-12: 21 of 606 symbols, A..AKAM)
+        return code in (403, 429) or code >= 500
     return isinstance(exc, httpx.TransportError)
 
 
@@ -147,9 +159,9 @@ def run_update(
     retry_budget: float = 600.0,
     alt: AltFn | None = None,
 ) -> dict[str, Any]:
-    """``retries``: extra attempts after HTTP 429 / 5xx / network errors, waiting backoff × 3^n;
-    total waiting per run is capped by ``retry_budget`` seconds (a blocked source must not stall
-    a 600-symbol update)."""
+    """``retries``: extra attempts after HTTP 403 / 429 / 5xx / network errors, waiting
+    backoff × 3^n; total waiting per run is capped by ``retry_budget`` seconds (a blocked
+    source must not stall a 600-symbol update)."""
     results: list[dict[str, Any]] = []
     failed: dict[str, str] = {}
     retried: dict[str, int] = {}
@@ -217,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("symbols", nargs="*", help="default: every symbol in the store")
     parser.add_argument("--full-start", type=date.fromisoformat, default=date(2000, 1, 1))
     parser.add_argument("--pause", type=float, default=0.5)
-    parser.add_argument("--retries", type=int, default=3, help="extra attempts on 429/5xx")
+    parser.add_argument("--retries", type=int, default=3, help="extra attempts on 403/429/5xx")
     parser.add_argument("--retry-budget", type=float, default=600.0, help="max seconds of waiting")
     parser.add_argument(
         "--alpaca-backup",
@@ -231,6 +243,10 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     store = open_store(settings)
     symbols = [s.upper() for s in args.symbols] or store.symbols()
+    # companies taken over / delisted: their stored history is final, stop asking the source
+    retired = load_retired(args.exceptions)
+    skipped = sorted(s for s in symbols if s in retired)
+    symbols = [s for s in symbols if s not in retired]
     # never store a half-finished session (a run during US trading hours)
     today = last_closed_session(datetime.now(UTC))
     with httpx.Client(
@@ -249,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
             retry_budget=args.retry_budget,
             alt=_alpaca_alt(settings) if args.alpaca_backup else None,
         )
-    summary = {"dry_run": not args.execute, "date": today.isoformat(), **summary}
+    summary = {"dry_run": not args.execute, "date": today.isoformat(), **summary,
+               "retired_skipped": skipped}  # fmt: skip
     text = json.dumps(summary, indent=2, ensure_ascii=False)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
