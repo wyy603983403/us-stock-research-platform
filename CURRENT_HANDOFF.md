@@ -102,3 +102,11 @@
 49. 2026-10-10 用户“继续研究个股 / 1 到 4 都研究 / 都做”：研究 15–19 全部未通过（小盘因子、13F 最看好、财报后漂移、空头最少、
     等权剔除空头最拥挤 10%），结果在 docs/results/。新增数据收集：usr-collect-8k（SEC 8-K 索引，可 --from-raw 解析 Mac 下载的原始文件）、
     usr-collect-short（FINRA 半月度空头文件；2026 年起文件改为带引号，已兼容）。个股清单与持仓加“空头拥挤”提醒（configs/stocks.yml short_crowded_share）。
+50. 2026-10-11/12 数据与运维：13F/FTD/8-K/FINRA 数据存入 Mac 库；Mac 每日更新加每周（标普新成员、成分历史、FINRA）与每月（SEC 季度、
+    代码→CIK、8-K --update、usr-collect-13f）任务，按周/月标记各跑一次，开机登录补跑（RunAtLoad）；雅虎 403 限流改为重试；
+    WBD 2026-10-06 被收购退市（quality_exceptions.yml retired:）。模拟盘买单加 1% 现金缓冲（configs/paper_broker.yml；10-09 满仓买单差 $7 被拒）。
+    CI 改回 Mac 自建 runner（标签 usr，scripts/mac_install_runner.sh；仓库变量 CI_RUNNER=github 可切回托管；fork PR 不在本机运行；Python 用 setup-uv）。
+51. 2026-10-12 实盘成本与税（docs/results/vt-only-live-costs.md，tools/live_cost_replay.py）：模型 13.6% → 实盘约 12.6%，滑点为主（1 bp ≈ 0.15%/年），
+    建议用收盘竞价单（MOC/LOC，待用户确认嘉信是否支持）。按中国 20% 逐年纳税示意：策略约 9.5%，持有 SPY 约 10.4%。
+    用户在考虑以定投宽基指数为核心（每月/到账即买；非美国居民注意美国遗产税 6 万美元门槛与爱尔兰注册 ETF）；
+    待用户决定。用户以后把入金与成交发来，由 Claude 记账（与策略仓位分开）。
