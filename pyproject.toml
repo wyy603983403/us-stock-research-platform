@@ -100,6 +100,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tools/rehearse_server.py" = ["E501"]  # embedded stub programs
+"tools/live_cost_replay.py" = ["E501"]  # one-off replay with long report lines
 
 [tool.mypy]
 python_version = "3.11"
