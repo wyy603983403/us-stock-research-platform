@@ -3553,3 +3553,29 @@ def test_paper_never_falls_back_to_an_older_unsent_list(tmp_path: Path) -> None:
         ap.PaperClient, ap.submission_window_ok, cfg.load_settings = saved[:3]  # type: ignore[assignment]
         os.environ.clear()
         os.environ.update(saved[3])
+
+
+def test_paper_last_orders_state_pending_dead_and_rebuilt_ids() -> None:
+    from us_stock_research.trading import alpaca_paper as ap
+
+    class Fake:
+        def __init__(self, statuses: dict[str, str]) -> None:
+            self.statuses = statuses
+
+        def order_by_client_id(self, cid: str) -> dict[str, str] | None:
+            return {"status": self.statuses[cid]} if cid in self.statuses else None
+
+    cid = ap.client_order_id("vt_only", "2026-10-09", "SSO", "BUY")
+    old = {"positions": {}, "expected_after_fills": {"SSO": 1386},
+           "submitted_signal_days": ["2026-10-09"]}  # fmt: skip
+    assert ap.last_orders_state(Fake({cid: "accepted"}), old, "vt_only")[0] == "pending"
+    assert ap.last_orders_state(Fake({cid: "rejected"}), old, "vt_only")[0] == "dead"
+    assert ap.last_orders_state(Fake({cid: "filled"}), old, "vt_only")[0] == "other"
+    assert ap.last_orders_state(Fake({}), old, "vt_only")[0] == "other"
+    new = dict(old, last_submitted_orders=["x", "y"])
+    assert (
+        ap.last_orders_state(Fake({"x": "canceled", "y": "expired"}), new, "vt_only")[0] == "dead"
+    )
+    assert (
+        ap.last_orders_state(Fake({"x": "canceled", "y": "filled"}), new, "vt_only")[0] == "other"
+    )

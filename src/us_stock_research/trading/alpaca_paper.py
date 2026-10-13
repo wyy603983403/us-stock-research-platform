@@ -116,6 +116,32 @@ def reconcile(expected: dict[str, float] | None, actual: dict[str, float]) -> li
     return out
 
 
+PENDING = {"new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated",
+           "partially_filled", "pending_replace", "pending_cancel"}  # fmt: skip
+DEAD = {"rejected", "canceled", "expired"}
+
+
+def last_orders_state(client: Any, holdings: dict[str, Any], study: str) -> tuple[str, list[str]]:
+    """Status of the last submission's orders: ``pending`` (none final yet), ``dead`` (all
+    refused/cancelled/expired, so the expected positions will never arrive), or ``other``."""
+    cids = list(holdings.get("last_submitted_orders") or [])
+    days = holdings.get("submitted_signal_days") or []
+    if not cids and days:  # submissions made before the ids were kept: rebuild them
+        symbols = set(holdings.get("expected_after_fills") or {}) | set(holdings["positions"])
+        cids = [client_order_id(study, days[-1], s, side) for s in sorted(symbols)
+                for side in ("BUY", "SELL")]  # fmt: skip
+    found = [(cid, client.order_by_client_id(cid)) for cid in cids]
+    statuses = [f"{cid}: {o.get('status')}" for cid, o in found if o]
+    states = {str(o.get("status")) for _, o in found if o}
+    if not states:
+        return "other", statuses
+    if states <= DEAD:
+        return "dead", statuses
+    if states <= PENDING:
+        return "pending", statuses
+    return "other", statuses
+
+
 def holdings_from_account(
     account: dict[str, Any], positions: dict[str, float], previous: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -129,6 +155,7 @@ def holdings_from_account(
         "equity_usd": round(equity, 2),
         "expected_after_fills": (previous or {}).get("expected_after_fills"),
         "submitted_signal_days": list((previous or {}).get("submitted_signal_days") or []),
+        "last_submitted_orders": list((previous or {}).get("last_submitted_orders") or []),
     }
 
 
@@ -190,6 +217,16 @@ def main(argv: list[str] | None = None) -> int:
     positions = client.positions()
     holdings = holdings_from_account(client.account(), positions, previous)
     breaks = reconcile(holdings.get("expected_after_fills"), positions)
+    waiting = False
+    if breaks:  # before calling it a break, ask the broker what became of the last orders
+        state, statuses = last_orders_state(client, holdings, study)
+        if state == "dead":
+            print("上次模拟单没有成交（" + "；".join(statuses) + "），对账基准改为账户实际持仓")
+            holdings["expected_after_fills"] = None
+            breaks = []
+        elif state == "pending":
+            print("上次模拟单还在等收盘成交（" + "；".join(statuses) + "），本次不发新单")
+            breaks, waiting = [], True
     path.parent.mkdir(parents=True, exist_ok=True)
     if args.sync:
         if breaks:
@@ -205,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     if breaks:
         print("对账不一致，停止发送新订单：\n  " + "\n  ".join(breaks))
         return 1
+    if waiting:
+        return 0
     files = sorted((args.orders_dir / study).glob("*.json"))
     if not files:
         print("没有订单清单")
@@ -232,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"模拟单提交被拒绝：{exc}")
         return 2
     holdings["expected_after_fills"] = expected
+    holdings["last_submitted_orders"] = [o["client_order_id"] for o in sent]
     holdings["submitted_signal_days"] = sorted(
         set(holdings["submitted_signal_days"]) | {intent["signal_day"]}
     )[-60:]

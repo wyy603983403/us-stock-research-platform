@@ -122,6 +122,10 @@ case "$STK_OUT" in *提醒*) NOTE="${NOTE:+$NOTE
 case "$PAPER_SUBMIT" in *被拒绝*|*Traceback*|*Error*) NOTE="⚠️ $(echo "$PAPER_SUBMIT" | grep -m1 -E '拒绝|Error')
 $NOTE";; *'"status"'*) NOTE="${NOTE:+$NOTE
 }模拟单已提交（收盘价成交）";; esac
+# 上一批模拟单的状态（还在等成交 / 没成交已重置 / 对账不一致）写进通知
+PAPER_STATE=$(echo "$PAPER_SUBMIT" | grep -m1 -E '等收盘成交|没有成交|对账不一致' || true)
+[ -n "$PAPER_STATE" ] && NOTE="${NOTE:+$NOTE
+}模拟盘：${PAPER_STATE}"
 [ -n "$STOPPED" ] && NOTE="⛔ 紧急停止中：清单照常生成，但不发模拟单、不自动下单（恢复：Mac 上 bash scripts/control.sh resume）
 $NOTE"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE
