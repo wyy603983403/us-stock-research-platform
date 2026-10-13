@@ -13,11 +13,19 @@ RSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new"
 echo "== 1/4 上传代码"
 "${SSH[@]}" "mkdir -p $APP /opt/usr-trade/state; for p in rsync curl git; do command -v \$p >/dev/null || \
   (apt-get update -qq && apt-get install -y -qq \$p) >/dev/null 2>&1 || yum install -y -q \$p >/dev/null 2>&1 || dnf install -y -q \$p >/dev/null; done"
-rsync -az --delete -e "$RSH" \
+rsync -az --checksum --delete -e "$RSH" \
   --exclude '.venv' --exclude '__pycache__' --exclude '.git' --exclude 'artifacts' \
   --exclude 'orders' --exclude 'portfolio' --exclude 'logs' --exclude 'data' --exclude '.env' \
   --exclude '.usr_sync_*' --exclude 'backup_*' \
   src scripts configs research docs ops pyproject.toml README.md AGENTS.md "$HOST:$APP/"
+# 核对：Mac 与服务器上的代码指纹必须一致（2026-10-13 曾出现部署“成功”但服务器仍是旧代码）
+FP='find src scripts configs -type f ! -path "*/__pycache__/*" ! -path "*.egg-info/*" ! -name ".DS_Store" | LC_ALL=C sort | xargs cat'
+LOCAL_FP=$(eval "$FP" | shasum -a 256 | cut -c1-16)
+REMOTE_FP=$("${SSH[@]}" "cd $APP && $FP | sha256sum | cut -c1-16")
+if [ "$LOCAL_FP" != "$REMOTE_FP" ]; then
+  echo "代码指纹不一致（Mac ${LOCAL_FP}，服务器 ${REMOTE_FP}），部署中止，请重试" >&2; exit 1
+fi
+echo "   代码指纹一致：${LOCAL_FP}"
 
 echo "== 2/4 迁移已批准策略的订单与账本（服务器已有的不覆盖）"
 for d in orders/sp500_trend_voltarget portfolio/rehearsal portfolio/paper; do
