@@ -3499,3 +3499,57 @@ def test_update_retries_403_and_skips_retired(tmp_path: Path) -> None:
     assert up.load_retired(tmp_path / "missing.yml") == {}
     real = up.load_retired(ROOT / "configs/quality_exceptions.yml")
     assert real["WBD"]["last_day"] == "2026-10-06"
+
+
+def test_paper_never_falls_back_to_an_older_unsent_list(tmp_path: Path) -> None:
+    import json as js
+    import os
+    from datetime import timedelta
+
+    import httpx
+    import yaml
+
+    import us_stock_research.config as cfg
+    from us_stock_research.trading import alpaca_paper as ap
+
+    posted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p = request.url.path
+        if p == "/v2/account":
+            return httpx.Response(200, json={"equity": "100000", "cash": "100000"})
+        if p == "/v2/positions":
+            return httpx.Response(200, json=[])
+        if p == "/v2/orders:by_client_order_id":
+            return httpx.Response(404)
+        posted.append(p)
+        return httpx.Response(200, json={"status": "accepted"})
+
+    conf = tmp_path / "paper.yml"
+    hold = tmp_path / "portfolio/paper/mix.yml"
+    conf.write_text(yaml.safe_dump({"enabled": True, "study": "mix", "holdings": str(hold)}))
+    orders = tmp_path / "orders/mix"
+    orders.mkdir(parents=True)
+    older = (date.today() - timedelta(days=2)).isoformat()
+    newer = date.today().isoformat()
+    buy = [{"side": "BUY", "symbol": "SSO", "shares": 9}]
+    intent = {"study": "mix", "signal_day": older, "mode": "live-candidate",
+              "trading_enabled": False, "orders": buy}  # fmt: skip
+    (orders / f"{older}.json").write_text(js.dumps(intent))  # refused by the broker back then
+    (orders / f"{newer}.json.rejected").write_text(js.dumps(dict(intent, signal_day=newer)))
+    saved = (ap.PaperClient, ap.submission_window_ok, cfg.load_settings, dict(os.environ))
+    ap.PaperClient = lambda k, s: saved[0](k, s, transport=httpx.MockTransport(handler))  # type: ignore[assignment,misc]
+    ap.submission_window_ok = lambda now: True  # type: ignore[assignment]
+    cfg.load_settings = lambda: None  # type: ignore[assignment]
+    os.environ.update(ALPACA_PAPER_KEY_ID="k", ALPACA_PAPER_SECRET_KEY="s")
+    run = ["--config", str(conf), "--orders-dir", str(tmp_path / "orders")]
+    try:
+        assert ap.main(["--sync", *run]) == 0
+        assert ap.main(["--submit", *run]) == 0
+        assert posted == []  # the set-aside newer list blocks the older one
+        (orders / f"{newer}.json.rejected").unlink()
+        assert ap.main(["--submit", *run]) == 0 and posted  # without it the older list goes
+    finally:
+        ap.PaperClient, ap.submission_window_ok, cfg.load_settings = saved[:3]  # type: ignore[assignment]
+        os.environ.clear()
+        os.environ.update(saved[3])

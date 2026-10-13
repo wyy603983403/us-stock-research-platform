@@ -209,6 +209,14 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         print("没有订单清单")
         return 0
+    # a newer list set aside by the independent check (<day>.json.rejected) means today's decision
+    # is "do not trade": never fall back to an older list (2026-10-13: the rejected 10-12 list made
+    # the 10-09 list, refused by Alpaca at the time, look like the latest one and it was sent)
+    rejected = sorted((args.orders_dir / study).glob("*.json.rejected"))
+    if rejected and rejected[-1].name.removesuffix(".rejected") > files[-1].name:
+        name = rejected[-1].name.removesuffix(".rejected")
+        print(f"最新订单清单 {name} 被独立复核搁置，未发送任何清单")
+        return 0
     intent = json.loads(files[-1].read_text())
     if intent["signal_day"] in holdings["submitted_signal_days"]:
         # e.g. today's list was set aside by the independent check: never fall back to an older one
