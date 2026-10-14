@@ -7,6 +7,8 @@
 #   bash scripts/stocks.sh sell NVDA 2 190 [手续费] [日期]
 #   bash scripts/stocks.sh cash 3.21 "NVDA 分红（税后）"        # 分红、费用；入金/出金加 deposit：cash 2000 "追加" deposit
 #   bash scripts/stocks.sh split NVDA 10                      # 拆股（10 拆 1 填 10）
+#   bash scripts/stocks.sh look NVDA                          # 一只股票的资料页（趋势、风险、财报、空头、可买股数）
+#   bash scripts/stocks.sh report                             # 按年汇总已实现盈亏、手续费、分红（记账报税用）
 #   bash scripts/stocks.sh status | show
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -34,6 +36,9 @@ case "$cmd" in
          run ".venv/bin/usr-stocks split --symbol $(sym "$1") --ratio $(num "$2")" ;;
   screen) ssh -i "$KEY" "$HOST" "f=\$(ls -1 /opt/usr-trade/state/artifacts/stocks/screen_*.md 2>/dev/null | tail -n 1); [ -n \"\$f\" ] && cat \"\$f\" || echo 还没有候选清单（每周五信号日那次运行生成）" ;;
   status) ssh -i "$KEY" "$HOST" "cat /opt/usr-trade/state/artifacts/stocks/status.md 2>/dev/null || echo 还没有个股状态（建账后下一次运行生成）" ;;
+  look)  [ -n "${1:-}" ] || { echo "用法：bash scripts/stocks.sh look 代码"; exit 1; }
+         run ".venv/bin/usr-stocks look --symbol $(sym "$1")" ;;
+  report) run ".venv/bin/usr-stocks report" ;;
   show)  run ".venv/bin/usr-stocks show" ;;
   *) echo "未知命令 $cmd"; exit 1 ;;
 esac

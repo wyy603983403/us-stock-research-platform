@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -2722,6 +2722,118 @@ def test_stocks_screen_rules() -> None:
     top = sorted(series)[-2:]
     assert all(n.split()[0] in top for n in notes) and len(notes) == len({"WILD", "F1"} & set(top))
     assert st.short_notes(["UP1"], None, set(series), 0.1) == []
+    # momentum percentile over all members; week-over-week changes and holdings table
+    assert res["rows"]["UP1"]["mom_pct"] > res["rows"]["DOWN"]["mom_pct"]
+    assert max(r["mom_pct"] for r in res["rows"].values()) == 1.0
+    from us_stock_research.trading import stock_analysis as sa
+
+    ch = sa.screen_changes(syms, ["UP1", "OLD"])
+    assert ch == {"new": [s for s in syms if s != "UP1"], "dropped": ["OLD"]}
+    assert sa.screen_changes(syms, None) is None
+    checks = sa.holding_checks(["UP1", "DOWN", "XYZ"], res["rows"], syms, res["vol_cut"])
+    by = {c["symbol"]: c for c in checks}
+    assert by["UP1"]["rank"] == 1 and by["DOWN"]["above_sma"] is False
+    assert by["XYZ"]["evaluated"] is False
+    md3 = st.render_screen(res, date(2026, 10, 16), m, ch, checks, "2026-10-09")
+    assert "新进" in md3 and "掉出 OLD" in md3 and "| DOWN |" in md3 and "**否**" in md3
+
+
+def test_stock_analysis_figures(tmp_path: Path) -> None:
+    from us_stock_research.trading import stock_analysis as sa
+    from us_stock_research.trading import stocks as st
+
+    d0 = date(2025, 1, 1)
+    spy = [(d0 + timedelta(i), 100 * 1.001**i * (1 + 0.01 * (-1) ** i)) for i in range(300)]
+    # a stock moving exactly twice SPY's daily returns -> beta 2
+    stock = [spy[0]]
+    for i in range(1, 300):
+        r = spy[i][1] / spy[i - 1][1] - 1
+        stock.append((spy[i][0], stock[-1][1] * (1 + 2 * r)))
+    assert sa.beta(stock, spy) == pytest.approx(2.0, rel=1e-9)
+    assert sa.max_drawdown([100, 120, 90, 130, 117]) == pytest.approx(-0.25)
+    prof = sa.profile(stock, spy)
+    assert prof is not None and prof["beta"] == pytest.approx(2.0, rel=1e-9)
+    assert prof["vs_sma200"] is not None and prof["momentum_12_1"] is not None
+    assert sa.profile([]) is None
+    short_prof = sa.profile(stock[:30])
+    assert short_prof is not None and short_prof["vs_sma200"] is None
+    assert short_prof["ret_12m"] is None
+    # earnings: 8-K with Item 2.02 only; next = last + median of the usable gaps
+    subs = {"filings": {"recent": {
+        "form": ["8-K", "8-K", "8-K/A", "8-K", "10-Q", "8-K", "8-K"],
+        "items": ["2.02,9.01", "5.02", "2.02", "2.02,9.01", "", "2.02", "2.02"],
+        "filingDate": ["2026-08-27", "2026-07-01", "2026-06-01", "2026-05-28", "2026-05-28",
+                       "2026-02-25", "2025-11-19"],
+    }}}  # fmt: skip
+    dates = sa.earnings_dates(subs)
+    assert dates == [date(2025, 11, 19), date(2026, 2, 25), date(2026, 5, 28), date(2026, 8, 27)]
+    nxt = sa.next_earnings(dates, date(2026, 10, 14))
+    assert nxt is not None and nxt["gap_days"] == 92 and nxt["estimate"] == date(2026, 11, 27)
+    assert nxt["days_to"] == 44 and sa.next_earnings([], date(2026, 1, 1)) is None
+    # SPY shadow: 1000 at 100, later 500 at 125 -> 14 units; at 150 worth 2100
+    prices = {date(2026, 1, 2): 100.0, date(2026, 3, 2): 125.0, date(2026, 6, 1): 150.0}
+    sh = sa.shadow_spy([(date(2026, 1, 1), 1000.0), (date(2026, 3, 2), 500.0)], prices,
+                       date(2026, 6, 1))  # fmt: skip
+    assert sh is not None and sh["value"] == pytest.approx(2100.0)
+    assert sh["return"] == pytest.approx(0.4)
+    # ledger: deposits, yearly totals, status rendering with the extra figures
+    path = tmp_path / "s.yml"
+    led = st.init(path, 1000.0, date(2025, 12, 30))
+    led["funded_usd"] = 1500.0
+    led["cash_usd"] = 1500.0
+    led["cash_adjustments"] = [
+        {"at": "2026-03-02", "amount": 500.0, "deposit": True, "note": "追加"},
+        {"at": "2026-04-01", "amount": 3.2, "deposit": False, "note": "分红"},
+    ]
+    assert sa.deposits_of(led) == [(date(2025, 12, 30), 1000.0), (date(2026, 3, 2), 500.0)]
+    fills = tmp_path / "fills.csv"
+    st.write_fill(fills, ["t", "2026-01-05", "AAA", "BUY", "10", "50", "1", "0", ""])
+    st.write_fill(fills, ["t", "2026-02-05", "AAA", "SELL", "5", "60", "1", "48.95", ""])
+    years = sa.yearly_summary(fills, led)
+    assert years[2025]["deposits"] == 1000.0 and years[2026]["deposits"] == 500.0
+    assert years[2026]["realized"] == pytest.approx(48.95) and years[2026]["fees"] == 2.0
+    assert years[2026]["other_cash"] == pytest.approx(3.2) and years[2026]["trades"] == 2
+    assert "| 2026 | 2 |" in st.render_report(years)
+    st.record(led, day=date(2026, 6, 1), symbol="AAA", side="BUY", qty=10, price=50.0)
+    v = st.valuation(led, {"AAA": 45.0})
+    v["rows"][0].update({"chg_1d": -0.01, "vs_sma200": -0.05, "beta": 1.5, "vol_60": 0.4,
+                         "sector": "Tech",
+                         "earnings": {"estimate": date(2026, 6, 5), "days_to": 4}})  # fmt: skip
+    limits = {"below_sma200": True, "earnings_within_days": 7}
+    notes = st.holding_alerts(v["rows"], limits)
+    assert any("200 日均线下方" in n for n in notes) and any("发财报" in n for n in notes)
+    assert st.holding_alerts(v["rows"], {}) == []
+    md = st.render_status(led, v, notes, 0.1, date(2026, 6, 1), {"shadow": sh})
+    assert "同样的入金" in md and "行业：Tech" in md and "β 0.45" not in md and "| AAA |" in md
+    assert "同样入金买 SPY +40.0%" in st.summary_line(led, v, notes, 0.1, sh)
+
+
+def test_stocks_look_page() -> None:
+    from us_stock_research.trading import stock_analysis as sa
+    from us_stock_research.trading import stocks as st
+
+    d0 = date(2025, 1, 1)
+    series = [(d0 + timedelta(i), 100 * 1.002**i) for i in range(300)]
+    prof = sa.profile(series, series)
+    assert prof is not None
+    nxt = sa.next_earnings([date(2026, 5, 28), date(2026, 8, 27)], date(2026, 10, 14))
+    md = st.render_look(
+        "AAA", prof, prof,
+        member=("Aaa Inc", "Tech", "123"),
+        earn={"next": nxt},
+        short={"settlement": "2026-09-30", "dtc": {"AAA": 9.0, "BBB": 1.0}},
+        members={"AAA", "BBB"},
+        screen_info={"day": "2026-10-09", "row": {"mom_pct": 0.9, "above_sma": True, "vol": 0.3},
+                     "vol_cut": 0.5, "rank": 3},
+        position={"qty": 2.0, "avg_cost": 90.0, "pnl_pct": 0.1, "weight": 0.05, "nav": 4000.0,
+                  "cash": 1000.0, "room": 4},
+        limits={"max_position_share": 0.25},
+    )  # fmt: skip
+    for text in ("不是买入建议", "Aaa Inc", "90% 百分位", "最拥挤", "2026-08-27",
+                 "候选第 3 位", "已持有 2 股", "约 4 股"):  # fmt: skip
+        assert text in md, text
+    bare = st.render_look("ZZZ", prof, None)
+    assert "不在当前标普 500" in bare and "没有拿到" in bare and "还没有个股账本" in bare
 
 
 def test_alpaca_fetch_many_pages_and_symbols() -> None:

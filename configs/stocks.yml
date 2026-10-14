@@ -10,6 +10,8 @@ alerts:                          # 用户 2026-10-08 选择
   max_position_share: 0.25       # 单只市值 > 板块净值 25% 时提醒（买前检查也用这个数）
   drop_from_cost: 0.20           # 现价比平均成本低 20% 及以上时提醒
   section_drawdown: 0.30         # 板块净值比历史最高低 30% 及以上时提醒
+  below_sma200: true             # 持仓收盘在 200 日均线下方时提醒（2026-10-14 个股板块升级新增；只提醒）
+  earnings_within_days: 7        # 持仓预计 7 天内发财报时提醒（按过去 8-K Item 2.02 间隔推算，需服务器 .env 有 SEC_USER_AGENT）
   short_crowded_share: 0.10      # 持仓的回补天数（FINRA 空头股数 ÷ 日均成交量）在标普 500 最高 10% 时提醒（用户 2026-10-10 要求；依据研究 18 的观察）
 
 screen:                          # 每周一次（周五信号日的那次运行），结果在 artifacts/stocks/screen_<日期>.md
