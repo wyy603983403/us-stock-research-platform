@@ -25,7 +25,7 @@ PAPER_ON=$(.venv/bin/python -c "import yaml;print(bool((yaml.safe_load(open('con
 # 模拟盘打开后持仓以模拟账户为准，演练账本冻结（不再记账）
 [ "$PAPER_ON" = "True" ] || .venv/bin/usr-rehearsal-fill --study $STUDY --cost-bps 10 2>&1 | tail -n 2
 if [ "$PAPER_ON" = "True" ]; then
-  .venv/bin/usr-paper --sync 2>&1 | tail -n 5
+  PAPER_SYNC=$(.venv/bin/usr-paper --sync 2>&1 | tail -n 5); echo "$PAPER_SYNC"
   LEDGER=portfolio/paper/$STUDY.yml
 fi
 HOLD=""; [ -f "$LEDGER" ] && HOLD="--holdings $LEDGER"
@@ -123,7 +123,8 @@ case "$PAPER_SUBMIT" in *被拒绝*|*Traceback*|*Error*) NOTE="⚠️ $(echo "$P
 $NOTE";; *'"status"'*) NOTE="${NOTE:+$NOTE
 }模拟单已提交（收盘价成交）";; esac
 # 上一批模拟单的状态（还在等成交 / 没成交已重置 / 对账不一致）写进通知
-PAPER_STATE=$(echo "$PAPER_SUBMIT" | grep -m1 -E '等收盘成交|没有成交|对账不一致' || true)
+# 状态可能在早先的同步步骤里就已处理（例如上一批单没成交、对账基准已重置），两处输出都看
+PAPER_STATE=$(printf '%s\n%s\n' "${PAPER_SYNC:-}" "$PAPER_SUBMIT" | grep -m1 -E '等收盘成交|没有成交|对账不一致' || true)
 [ -n "$PAPER_STATE" ] && NOTE="${NOTE:+$NOTE
 }模拟盘：${PAPER_STATE}"
 [ -n "$STOPPED" ] && NOTE="⛔ 紧急停止中：清单照常生成，但不发模拟单、不自动下单（恢复：Mac 上 bash scripts/control.sh resume）
