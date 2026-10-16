@@ -8,13 +8,18 @@ The user chose Alpaca paper trading for stage 2 on 2026-10-03. Safeguards:
   once stage 1 (three months of matching reviews) has passed;
 * reconciliation first: if the paper positions differ from what the previous submission expected,
   no new orders are sent (roadmap: stop on a reconciliation break);
-* orders are market-on-close (``time_in_force: cls``) for the fill day, the backtest's
-  "signal day close -> next close" timing; each carries a deterministic ``client_order_id`` so a
-  rerun never sends an order twice. Alpaca rejects close orders sent between 15:50 and 19:00 ET,
-  so submission is refused in that window.
+* fill timing follows the backtest's "signal day close -> next close" as closely as the paper
+  account allows. ``order_timing: close`` (the original setting) sends market-on-close orders
+  (``time_in_force: cls``) after the signal day; Alpaca rejects close orders sent between 15:50
+  and 19:00 ET, so submission is refused in that window. The paper account let every such order
+  expire unfilled (10-13 to 10-15, 2026), so ``order_timing: before_close`` (2026-10-16) sends
+  plain market day orders 5-25 minutes before the next close instead (``usr-paper --submit
+  --near-close``, server timer 15:38 New York); outside that window, or on a closed day, nothing
+  is sent. Each order carries a deterministic ``client_order_id`` so a rerun never sends twice.
 
 Commands: ``usr-paper --check`` (read-only account status), ``usr-paper --sync`` (write the paper
-holdings file used by ``usr-lt-intent``), ``usr-paper --submit`` (send the latest order list).
+holdings file used by ``usr-lt-intent``), ``usr-paper --submit [--near-close]`` (send the latest
+order list).
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ PAPER_URL = "https://paper-api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
 CLOSE_CUTOFF = time(15, 50)
 REOPEN = time(19, 0)
+NEAR_CLOSE = (timedelta(minutes=25), timedelta(minutes=5))  # window before the next close
 
 
 class PaperClient:
@@ -66,15 +72,26 @@ class PaperClient:
         response.raise_for_status()
         return dict(response.json())
 
+    def clock(self) -> dict[str, Any]:
+        return dict(self._get("/v2/clock"))
+
     def submit_close_order(
         self, symbol: str, side: str, qty: int, client_order_id: str
     ) -> dict[str, Any]:
+        return self.submit_order(symbol, side, qty, client_order_id, "cls")
+
+    def submit_order(
+        self, symbol: str, side: str, qty: int, client_order_id: str, tif: str
+    ) -> dict[str, Any]:
+        """Market order; ``tif`` is ``cls`` (on the close) or ``day`` (now)."""
+        if tif not in ("cls", "day"):
+            raise ValueError(f"time in force {tif!r}")
         body = {
             "symbol": symbol,
             "qty": str(qty),
             "side": side.lower(),
             "type": "market",
-            "time_in_force": "cls",
+            "time_in_force": tif,
             "client_order_id": client_order_id,
         }
         response = self.http.post("/v2/orders", json=body)
@@ -102,6 +119,14 @@ def submission_window_ok(now_utc: datetime) -> bool:
     """Alpaca rejects close orders between 15:50 and 19:00 New York time."""
     local = now_utc.astimezone(NEW_YORK).time()
     return not (CLOSE_CUTOFF <= local < REOPEN)
+
+
+def near_close_ok(clock: dict[str, Any], now_utc: datetime) -> bool:
+    """Market open and 5-25 minutes left before today's close (Alpaca ``/v2/clock``)."""
+    if not clock.get("is_open") or not clock.get("next_close"):
+        return False
+    close = datetime.fromisoformat(str(clock["next_close"]).replace("Z", "+00:00"))
+    return close - NEAR_CLOSE[0] <= now_utc < close - NEAR_CLOSE[1]
 
 
 def reconcile(expected: dict[str, float] | None, actual: dict[str, float]) -> list[str]:
@@ -165,21 +190,30 @@ def submit(
     holdings: dict[str, Any],
     *,
     now_utc: datetime,
+    timing: str = "close",
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
     """Send the order list (sells first) once; returns what was sent and the expected positions."""
     if intent.get("trading_enabled"):
         raise ValueError("order list claims live trading; this tool only knows paper trading")
     if intent.get("mode") != "live-candidate":
         raise ValueError(f"order list mode is {intent.get('mode')!r}: only approved studies")
-    if not submission_window_ok(now_utc):
-        raise ValueError("Alpaca rejects close orders between 15:50 and 19:00 New York time")
+    if timing == "close":
+        tif = "cls"
+        if not submission_window_ok(now_utc):
+            raise ValueError("Alpaca rejects close orders between 15:50 and 19:00 New York time")
+    elif timing == "before_close":
+        tif = "day"
+        if not near_close_ok(client.clock(), now_utc):
+            raise ValueError("not 5-25 minutes before an open market's close")
+    else:
+        raise ValueError(f"order_timing {timing!r}: use close or before_close")
     expected = dict(holdings["positions"])
     sent = []
     for order in sorted(intent["orders"], key=lambda o: o["side"] != "SELL"):
         side, symbol, qty = order["side"], order["symbol"], int(order["shares"])
         cid = client_order_id(intent["study"], intent["signal_day"], symbol, side)
         existing = client.order_by_client_id(cid)
-        result = existing or client.submit_close_order(symbol, side, qty, cid)
+        result = existing or client.submit_order(symbol, side, qty, cid, tif)
         sent.append({"client_order_id": cid, "status": result.get("status"), "resubmitted": not
                      existing, "symbol": symbol, "side": side, "qty": qty})  # fmt: skip
         expected[symbol] = expected.get(symbol, 0.0) + (qty if side == "BUY" else -qty)
@@ -194,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="read-only account status")
     mode.add_argument("--sync", action="store_true", help="write the paper holdings file")
     mode.add_argument("--submit", action="store_true", help="send the latest order list")
+    parser.add_argument(
+        "--near-close",
+        action="store_true",
+        help="with order_timing: before_close, the run 5-25 minutes before the close that sends",
+    )
     parser.add_argument("--config", type=Path, default=Path("configs/paper_broker.yml"))
     parser.add_argument("--orders-dir", type=Path, default=Path("orders"))
     args = parser.parse_args(argv)
@@ -239,6 +278,17 @@ def main(argv: list[str] | None = None) -> int:
     if not config["enabled"]:
         print("模拟盘提交开关为关（阶段 1 复核通过后由你在 configs/paper_broker.yml 打开），未发送")
         return 0
+    timing = str(config.get("order_timing", "close"))
+    if timing == "before_close" and not args.near_close:
+        print("模拟单在纽约收盘前约 20 分钟以市价单提交（order_timing: before_close），本次不发")
+        return 0
+    if args.near_close:
+        if timing != "before_close":
+            print("order_timing 不是 before_close，收盘前提交不做任何事")
+            return 0
+        if not near_close_ok(client.clock(), datetime.now(UTC)):
+            print("现在不在收盘前提交时段（休市、提前收盘或时间不对），未发送")
+            return 0
     if breaks:
         print("对账不一致，停止发送新订单：\n  " + "\n  ".join(breaks))
         return 1
@@ -266,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"最新订单清单 {files[-1].name} 已过期或为空，未发送")
         return 0
     try:
-        sent, expected = submit(client, intent, holdings, now_utc=datetime.now(UTC))
+        sent, expected = submit(client, intent, holdings, now_utc=datetime.now(UTC), timing=timing)
     except (OrderRejected, httpx.HTTPError, ValueError) as exc:
         print(f"模拟单提交被拒绝：{exc}")
         return 2
@@ -282,6 +332,11 @@ def main(argv: list[str] | None = None) -> int:
     with (args.orders_dir / "audit_log.jsonl").open("a") as log:
         log.write(json.dumps(entry, ensure_ascii=False) + "\n")
     print(json.dumps(sent, indent=2, ensure_ascii=False))
+    how = "收盘前市价单" if timing == "before_close" else "收盘价成交"
+    parts = [
+        f"{'买入' if o['side'] == 'BUY' else '卖出'} {o['symbol']} {o['qty']} 股" for o in sent
+    ]
+    print(f"模拟单已提交（{intent['signal_day']} 清单，{how}）：" + "；".join(parts))
     return 0
 
 

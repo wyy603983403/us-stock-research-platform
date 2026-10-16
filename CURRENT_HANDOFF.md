@@ -117,3 +117,7 @@
 53. 2026-10-14 个股板块升级（docs/server.md“个股板块”）：`usr-stocks look`（单只资料页）、`usr-stocks report`（年度汇总）；
     每日状态加趋势/β/行业/下次财报（SEC 8-K Item 2.02 间隔推算）与 SPY 影子账户对照；新提醒：跌破 200 日线、7 天内财报；
     每周清单加与上期比较、持仓位置表，并存 screen_<日期>.json。只做资料与提醒，不改规则、不下单。
+54. 2026-10-16 模拟盘收盘单从不成交：Alpaca 模拟账户让 cls 单（10-09/10-13/10-14）都在 16:00 过期、filled 0，模拟盘一直空仓
+    （账户 buying_power 被挂单占用属正常）。改为 `order_timing: before_close`：usr-paper.timer 纽约 15:38 运行
+    `usr-paper --submit --near-close`，收盘前 5–25 分钟（/v2/clock）提交市价 day 单；21:15 流水线不再发单，通知带上次提交结果。
+    彩排 14/14（tools/rehearse_server.py 加入收盘前提交步骤）。

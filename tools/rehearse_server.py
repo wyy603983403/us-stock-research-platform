@@ -65,6 +65,11 @@ class Fake:
         return {k: float(v) for k, v in load()["positions"].items()}
     def order_by_client_id(self, cid):
         return load()["orders"].get(cid)
+    def clock(self):  # always 20 minutes before the close: the near-close run may send
+        from datetime import UTC, datetime, timedelta
+        return {"is_open": True, "next_close": (datetime.now(UTC) + timedelta(minutes=20)).isoformat()}
+    def submit_order(self, symbol, side, qty, cid, tif):
+        return self.submit_close_order(symbol, side, qty, cid)
     def submit_close_order(self, symbol, side, qty, cid):
         if os.environ.get("FAKE_REJECT"):
             raise ap.OrderRejected(f"{symbol} {side} {qty}: HTTP 403 " + os.environ["FAKE_REJECT"])
@@ -141,6 +146,10 @@ def run_day(
     subprocess.run(["bash", "scripts/server_daily.sh"], cwd=app, env=env, check=False,
                    capture_output=True, timeout=900)  # fmt: skip
     log = (app / f"logs/daily_{stamp}.log").read_text()
+    # the next session's 15:38 New York run (order_timing: before_close) sends the list
+    sub = subprocess.run(["bash", "scripts/server_paper_submit.sh"], cwd=app, env=env,
+                         check=False, capture_output=True, text=True, timeout=300)  # fmt: skip
+    log += "\n" + sub.stdout + sub.stderr
     note = notify_log.read_text() if notify_log.exists() else ""
     return log, note
 
@@ -169,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(app / "orders", ignore_errors=True)
         (app / "orders").mkdir()
         (app / "fake_alpaca.json").unlink(missing_ok=True)
+        (app / "artifacts/paper_last_submit.txt").unlink(missing_ok=True)
         for f in (app / "portfolio/paper").glob("*"):
             f.unlink()
 
@@ -184,11 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     log, note = run_day(app, D1, "d1")
     check("d1 order list", "有新订单" in note and "买入" in note, note[:300])
     check("d1 verified", "独立复核：一致" in log)
-    check("d1 paper submitted", "模拟单已提交" in note, note[:300])
+    check("d1 paper submitted", "模拟单已提交" in log and "收盘前市价单" in log, log[-600:])
     check("d1 no traceback", traceback_free(log), log[-800:])
     # 2. next day: fills reconciled, no new orders unless the model trades
     log, note = run_day(app, D2, "d2")
     check("d2 holdings synced", "模拟盘持仓已写入" in log and "对账不一致" not in log, log[-600:])
+    check("d2 note shows the near-close submission", "模拟盘：纽约" in note, note[:400])
     check("d2 no traceback", traceback_free(log), log[-800:])
     # 3. data end before the signal day: reduce-only / waiting, no crash
     log, note = run_day(app, D3, "d3")
@@ -206,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     reset()
     (app / "portfolio/STOP_TRADING").write_text("test\n")
     log, note = run_day(app, D2, "d5")
-    check("d5 stop respected", "⛔" in note and "模拟单已提交" not in note, note[:300])
+    check("d5 stop respected", "⛔" in note and "模拟单已提交" not in log + note, note[:300])
     (app / "portfolio/STOP_TRADING").unlink()
     # 6. live ledger started: live list with cash buffer and its own independent check
     live = app / "configs/live.yml"

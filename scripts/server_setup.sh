@@ -69,6 +69,25 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+cat > /etc/systemd/system/usr-paper.service <<UNIT
+[Unit]
+Description=Paper orders 5-25 minutes before the New York close (Alpaca paper account only)
+After=network-online.target
+[Service]
+Type=oneshot
+User=usrtrade
+WorkingDirectory=$APP
+ExecStart=/bin/bash $APP/scripts/server_paper_submit.sh
+UNIT
+cat > /etc/systemd/system/usr-paper.timer <<UNIT
+[Unit]
+Description=Paper submission before the close (configs/paper_broker.yml order_timing)
+[Timer]
+OnCalendar=Mon..Fri 15:38 America/New_York
+AccuracySec=10s
+[Install]
+WantedBy=timers.target
+UNIT
 cat > /etc/systemd/system/usr-commands.service <<UNIT
 [Unit]
 Description=Phone commands over ntfy (status / emergency stop only)
@@ -116,9 +135,11 @@ systemctl daemon-reload
 systemctl enable --now usr-trade.timer >/dev/null
 systemctl enable --now usr-dashboard.service >/dev/null
 systemctl enable --now usr-watch.timer >/dev/null 2>&1 || echo "盘中预警定时器启动失败"
+systemctl enable --now usr-paper.timer >/dev/null 2>&1 || echo "模拟盘收盘前提交定时器启动失败"
 systemctl enable usr-commands.service >/dev/null 2>&1; systemctl restart usr-commands.service || echo "手机指令服务启动失败（见 journalctl -u usr-commands）"
 echo
 echo "完成。下次运行：$(systemctl list-timers usr-trade.timer --no-legend | awk '{print $1, $2, $3}')"
+echo "模拟盘收盘前提交：$(systemctl list-timers usr-paper.timer --no-legend | awk '{print $1, $2, $3}')"
 echo "手机安装 ntfy App，订阅频道：$TOPIC   （或浏览器打开 https://ntfy.sh/${TOPIC}）"
 if systemctl is-active --quiet usr-web.service 2>/dev/null; then
   WEB=$(grep -m1 -oE '^https://[^ {]+' /etc/caddy/Caddyfile 2>/dev/null || true)

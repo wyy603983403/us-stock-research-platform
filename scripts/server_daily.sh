@@ -127,6 +127,11 @@ $NOTE";; *'"status"'*) NOTE="${NOTE:+$NOTE
 PAPER_STATE=$(printf '%s\n%s\n' "${PAPER_SYNC:-}" "$PAPER_SUBMIT" | grep -m1 -E '等收盘成交|没有成交|对账不一致' || true)
 [ -n "$PAPER_STATE" ] && NOTE="${NOTE:+$NOTE
 }模拟盘：${PAPER_STATE}"
+# 收盘前提交（usr-paper.timer，纽约 15:38）的结果：20 小时内的那次写进通知
+if [ -f artifacts/paper_last_submit.txt ] && [ -n "$(find artifacts/paper_last_submit.txt -mmin -1200 2>/dev/null)" ]; then
+  NOTE="${NOTE:+$NOTE
+}模拟盘：$(cat artifacts/paper_last_submit.txt)"
+fi
 [ -n "$STOPPED" ] && NOTE="⛔ 紧急停止中：清单照常生成，但不发模拟单、不自动下单（恢复：Mac 上 bash scripts/control.sh resume）
 $NOTE"
 [ "$ST_RC" = "3" ] && NOTE="${NOTE:+$NOTE

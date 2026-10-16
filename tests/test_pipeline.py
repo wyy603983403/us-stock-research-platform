@@ -3667,6 +3667,55 @@ def test_paper_never_falls_back_to_an_older_unsent_list(tmp_path: Path) -> None:
         os.environ.update(saved[3])
 
 
+def test_paper_before_close_sends_day_market_orders_only_near_the_close() -> None:
+    import json as js
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from us_stock_research.trading import alpaca_paper as ap
+
+    posted: list[dict] = []  # type: ignore[type-arg]
+    clock = {"is_open": True, "next_close": "2026-10-16T16:00:00-04:00"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v2/clock":
+            return httpx.Response(200, json=clock)
+        if request.url.path == "/v2/orders:by_client_order_id":
+            return httpx.Response(404)
+        if request.url.path == "/v2/orders" and request.method == "POST":
+            posted.append(js.loads(request.content))
+            return httpx.Response(200, json={"status": "accepted"})
+        raise AssertionError(request.url)
+
+    client = ap.PaperClient("k", "s", transport=httpx.MockTransport(handler))
+    buy = [{"side": "BUY", "symbol": "SSO", "shares": 9}]
+    intent = {"study": "vt", "signal_day": "2026-10-15", "mode": "live-candidate",
+              "trading_enabled": False, "orders": buy}  # fmt: skip
+    at_1538 = datetime(2026, 10, 16, 19, 38, tzinfo=UTC)  # 15:38 EDT
+    for when, ok in ((at_1538, True), (datetime(2026, 10, 16, 19, 30, tzinfo=UTC), False),
+                     (datetime(2026, 10, 16, 19, 56, tzinfo=UTC), False)):  # fmt: skip
+        assert ap.near_close_ok(clock, when) is ok
+    assert not ap.near_close_ok({"is_open": False, "next_close": clock["next_close"]}, at_1538)
+    sent, expected = ap.submit(client, intent, {"positions": {}}, now_utc=at_1538,
+                               timing="before_close")  # fmt: skip
+    assert posted[0]["time_in_force"] == "day" and posted[0]["type"] == "market"
+    assert expected == {"SSO": 9.0} and sent[0]["status"] == "accepted"
+    noon = datetime(2026, 10, 16, 16, 0, tzinfo=UTC)
+    for kw, why in ((dict(now_utc=noon, timing="before_close"), "before"),
+                    (dict(now_utc=at_1538, timing="open"), "order_timing")):  # fmt: skip
+        try:
+            ap.submit(client, dict(intent, signal_day="2026-10-14"), {"positions": {}}, **kw)  # type: ignore[arg-type]
+        except ValueError as exc:
+            assert why in str(exc)
+        else:
+            raise AssertionError("submitted")
+    with pytest.raises(ValueError):
+        client.submit_order("SSO", "BUY", 1, "x", "opg")
+    real = ap.load_config(Path("configs/paper_broker.yml"))
+    assert real.get("order_timing") in ("close", "before_close")
+
+
 def test_paper_last_orders_state_pending_dead_and_rebuilt_ids() -> None:
     from us_stock_research.trading import alpaca_paper as ap
 

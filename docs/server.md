@@ -16,6 +16,13 @@
 - 部署成功后 Mac 写入 `portfolio/.vt_on_server`，Mac 的每日更新不再为该策略出单/记账（删除该文件即恢复）。
   ETF 趋势基线演练仍在 Mac。
 
+模拟盘下单时点（2026-10-16）：Alpaca 模拟账户让 10-09、10-13、10-14 三张收盘单（`cls`）都在收盘时过期、0 成交
+（10-15 那张仍在等待），模拟盘一直空仓。`configs/paper_broker.yml` 改为 `order_timing: before_close`：21:15 的流水线只出清单、复核、同步持仓，
+不再发单；另一个定时器 `usr-paper.timer`（纽约时间周一至周五 15:38，`scripts/server_paper_submit.sh`）在收盘前 5–25 分钟
+（按 Alpaca `/v2/clock` 判断，休市日和提前收盘日不发）把最新清单以**市价单**提交，成交价接近当天收盘价。成功的结果写进第二天早上的通知
+（“模拟盘：纽约 …模拟单已提交”），被拒、对账不一致或出错时立即通知。日志 `logs/paper_submit_YYYYMMDD.log`。
+改回原方式：`order_timing: close`。这只影响模拟盘；嘉信实盘仍由你手动下单。
+
 常用：`systemctl start usr-trade.service`（立即运行）、`journalctl -u usr-trade -n 80`、`cat /opt/usr-trade/state/artifacts/status.md`、
 `systemctl list-timers usr-trade.timer`。
 

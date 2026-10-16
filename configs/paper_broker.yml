@@ -6,3 +6,5 @@ enabled: true
 study: vt_only                                  # 与 configs/operating.yml 一致（2026-10-08 起）
 holdings: portfolio/paper/vt_only.yml
 cash_buffer: 0.01                               # 买单按账户 99% 计算（同 configs/live.yml）；2026-10-09 满仓买单因差 $7 被 Alpaca 拒绝
+order_timing: before_close                      # 2026-10-16：Alpaca 模拟盘连续 4 天让收盘单（cls）到收盘过期、0 成交，
+                                                # 改为纽约 15:38 定时器（收盘前 5-25 分钟）提交市价单；原方式为 close（收盘单）
