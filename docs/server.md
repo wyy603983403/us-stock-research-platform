@@ -68,6 +68,13 @@
   - 每周清单：与上一期比较的新进/掉出；你的每只持仓在本周规则下的位置（动量百分位、200 日线、波动、是否入选）。
     清单同时存 `screen_<日期>.json`，供 look 和下一期比较。
   - `bash scripts/stocks.sh report`：按年汇总成交、手续费、已实现盈亏（平均成本法）、分红及其他现金、入金（账本汇总，不是税务意见）。
+  - 2026-10-17 第二轮：
+    - 观察清单 `bash scripts/stocks.sh watch add NVDA AAPL [中文备注]`、`watch rm 代码`、`watch list`（不需要建账，最多 50 只，
+      存 `portfolio/stocks/watchlist.yml`）。每日检查，**只在状态变化时提醒一次**：站上/跌破 200 日线、进入/掉出每周候选、
+      预计 7 天内发财报（每个推算日期只提醒一次）。每周清单单列观察清单的位置；`look` 会标出“在观察清单中”。
+    - 每周候选加 β、一年最大回撤、下次财报（推算）；14 天内发财报的标 ⚠️（`screen.earnings_flag_days`，只标注）。
+    - `bash scripts/stocks.sh rescreen`：按最新收盘临时重筛，写 `artifacts/stocks/adhoc_<日期>.md` 并直接显示；
+      不参与每周那期的“新进/掉出”比较。
   - 财报日期需要服务器 .env 有 `SEC_USER_AGENT`（部署时从 Mac .env 带过去；没有就该项显示“没有拿到”，其余照常）。
 
 ## 嘉信 Trader API（2026-10-08，默认关闭）

@@ -233,3 +233,60 @@ def holding_checks(
             }
         )
     return out
+
+
+# ---------------------------------------------------------------- watchlist
+
+
+def load_watch(path: Path) -> dict[str, dict[str, Any]]:
+    """``{symbol: {added, note, above_sma, in_screen, earn_notified}}`` (empty when missing)."""
+    import yaml
+
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text()) or {}
+    return {str(s): dict(v or {}) for s, v in (raw.get("symbols") or {}).items()}
+
+
+def save_watch(path: Path, watch: dict[str, dict[str, Any]]) -> None:
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"symbols": {s: watch[s] for s in sorted(watch)}}
+    path.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
+
+
+def watch_events(
+    watch: dict[str, dict[str, Any]],
+    figures: dict[str, dict[str, Any]],
+    candidates: set[str] | None,
+    within_days: int | None,
+) -> list[str]:
+    """Reminders for watched symbols, each only once per change (``watch`` is updated):
+    a close crossing the 200-day line, entering or leaving the latest weekly candidates, and an
+    estimated report date coming within ``within_days``. A symbol's first check sets the state
+    without a reminder."""
+    notes = []
+    for s in sorted(watch):
+        st, fig = watch[s], figures.get(s) or {}
+        vs = fig.get("vs_sma200")
+        if vs is not None:
+            above = vs >= 0
+            if st.get("above_sma") is not None and above != st["above_sma"]:
+                notes.append(f"观察 {s} {'站上' if above else '跌破'} 200 日线（{vs:+.0%}）")
+            st["above_sma"] = above
+        if candidates is not None:
+            inside = s in candidates
+            if st.get("in_screen") is not None and inside != st["in_screen"]:
+                notes.append(f"观察 {s} {'进入' if inside else '掉出'}每周候选清单")
+            st["in_screen"] = inside
+        earn = fig.get("earnings")
+        if within_days is not None and earn and 0 <= earn["days_to"] <= within_days:
+            key = earn["estimate"].isoformat()
+            if st.get("earn_notified") != key:
+                notes.append(
+                    f"观察 {s} 预计 {earn['estimate']:%m-%d} 前后发财报"
+                    f"（推算，{earn['days_to']} 天后）"
+                )
+                st["earn_notified"] = key
+    return notes

@@ -13,6 +13,8 @@ Nothing here talks to a brokerage account or places orders. Separate money from 
     usr-stocks split --symbol NVDA --ratio 10                        # 10-for-1 split
     usr-stocks look --symbol NVDA                                     # one-page profile
     usr-stocks report                                                # yearly totals
+    usr-stocks watch add|rm|list [SYMBOLS] [--note TEXT]               # watchlist
+    usr-stocks screen --adhoc                                        # on-demand screen
     usr-stocks show | monitor | screen
 """
 
@@ -364,6 +366,8 @@ def render_screen(
     changes: dict[str, list[str]] | None = None,
     holdings: list[dict[str, Any]] | None = None,
     prev_day: str | None = None,
+    watch: list[dict[str, Any]] | None = None,
+    earnings_flag_days: int = 14,
 ) -> str:
     lines = [
         f"# 个股候选清单（{day.isoformat()}）",
@@ -384,18 +388,31 @@ def render_screen(
     lines += [
         "",
         "| # | 代码 | 公司 | 行业 | 12-1 动量 | 近 6 月 | 距 200 日线 | 60 日波动 "
-        "| 距一年高点 | 回补天数 | 已持有 |",
-        "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---|",
+        "| 距一年高点 | β | 一年最大回撤 | 回补天数 | 下次财报（推算） | 已持有 |",
+        "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for i, r in enumerate(result["candidates"], 1):
         dtc = r.get("dtc")
         cell = "—" if dtc is None else f"{dtc:.1f}" + (" ⚠️拥挤" if r.get("crowded") else "")
+        earn = r.get("earnings")
+        e_cell = "—"
+        if earn:
+            e_cell = f"{earn['estimate']:%m-%d}"
+            if 0 <= earn["days_to"] <= earnings_flag_days:
+                e_cell += f" ⚠️{earn['days_to']} 天后"
         lines.append(
             f"| {i} | {r['symbol']} | {r['name']} | {r['sector']} | {r['momentum_12_1']:+.0%} "
             f"| {r['return_6m']:+.0%} | {r['vs_sma']:+.0%} | {r['vol']:.0%} "
-            f"| {r['from_high']:+.0%} | {cell} | {'是' if r['held'] else ''} |"
+            f"| {r['from_high']:+.0%} | {_pct(r.get('beta'), '.2f')} | {_pct(r.get('max_dd'))} "
+            f"| {cell} | {e_cell} | {'是' if r['held'] else ''} |"
         )
     lines.append("")
+    if any(r.get("earnings") for r in result["candidates"]):
+        lines += [
+            f"下次财报按过去 8-K 业绩公告（Item 2.02）间隔推算；⚠️ = {earnings_flag_days} 天内，"
+            "财报前后股价波动通常更大。β、一年最大回撤为过去一年数据。",
+            "",
+        ]
     if changes is not None:
         lines.append(
             f"**和上一期（{prev_day}）相比**：新进 {'、'.join(changes['new']) or '无'}；"
@@ -415,6 +432,23 @@ def render_screen(
                 continue
             lines.append(
                 f"| {h['symbol']} | {h['mom_pct']:.0%} | {'是' if h['above_sma'] else '**否**'} "
+                f"| {'是' if h['vol_ok'] else '否'} "
+                f"| {('第 ' + str(h['rank']) + ' 位') if h['rank'] else '不在'} |"
+            )
+        lines.append("")
+    if watch:
+        lines += [
+            "**观察清单在本周规则下的位置**：",
+            "",
+            "| 代码 | 动量百分位 | 200 日线上方 | 波动在剔除线内 | 本周候选 |",
+            "|---|---:|---|---|---|",
+        ]
+        for h in watch:
+            if not h["evaluated"]:
+                lines.append(f"| {h['symbol']} | — | — | — | 不在当前标普 500 或历史不足，未评估 |")
+                continue
+            lines.append(
+                f"| {h['symbol']} | {h['mom_pct']:.0%} | {'是' if h['above_sma'] else '否'} "
                 f"| {'是' if h['vol_ok'] else '否'} "
                 f"| {('第 ' + str(h['rank']) + ' 位') if h['rank'] else '不在'} |"
             )
@@ -556,6 +590,7 @@ def render_look(
     position: dict[str, Any] | None = None,
     limits: dict[str, Any] | None = None,
     crowded_share: float = 0.10,
+    watched: dict[str, Any] | None = None,
 ) -> str:
     """One-page profile of a stock: figures only, no recommendation."""
     name, sector = (member[0], member[1]) if member else ("", "")
@@ -633,6 +668,9 @@ def render_look(
                 + (f"当期候选第 {rank} 位" if rank else "不在当期候选")
             )
     lines += ["", "## 个股板块"]
+    if watched is not None:
+        note = f"，备注：{watched['note']}" if watched.get("note") else ""
+        lines.append(f"- 在观察清单中（{watched.get('added', '')} 加入{note}）")
     if position is None:
         lines.append("- 还没有个股账本")
     else:
@@ -819,6 +857,92 @@ def _enrich(rows: list[dict[str, Any]], held: list[str], day: date) -> None:
         r["earnings"] = (earn.get(s) or {}).get("next")
 
 
+def _load_watch(path: Path) -> dict[str, dict[str, Any]]:
+    from us_stock_research.trading.stock_analysis import load_watch
+
+    try:
+        return load_watch(path)
+    except Exception:  # noqa: BLE001 - a broken watch file must not stop the rest
+        return {}
+
+
+def render_watch(watch: dict[str, dict[str, Any]]) -> str:
+    if not watch:
+        return "观察清单是空的：bash scripts/stocks.sh watch add 代码 [代码 ...]"
+    lines = [
+        f"观察清单（{len(watch)} 只；每日检查，状态变化时提醒一次）",
+        "",
+        "| 代码 | 加入 | 200 日线上方 | 在每周候选中 | 备注 |",
+        "|---|---|---|---|---|",
+    ]
+
+    def yn(x: Any) -> str:
+        return "—" if x is None else ("是" if x else "否")
+
+    for s_, w in sorted(watch.items()):
+        lines.append(
+            f"| {s_} | {w.get('added', '')} | {yn(w.get('above_sma'))} "
+            f"| {yn(w.get('in_screen'))} | {w.get('note', '')} |"
+        )
+    lines += ["", "单只详情：bash scripts/stocks.sh look 代码"]
+    return "\n".join(lines)
+
+
+def _watch_monitor(path: Path, day: date, limits: dict[str, Any], screens: Path) -> list[str]:
+    """Daily watchlist check (best effort; returns reminders, saves the new state)."""
+    import httpx
+
+    from us_stock_research.trading.stock_analysis import profile, save_watch, watch_events
+
+    watch = _load_watch(path)
+    if not watch:
+        return []
+    syms = sorted(watch)
+    members: dict[str, tuple[str, str, str]] = {}
+    try:
+        with httpx.Client(timeout=60, follow_redirects=True) as client:
+            hist = _history(client, syms + ["SPY"], day)
+            members = _sp500(client)
+    except Exception:  # noqa: BLE001 - optional
+        return []
+    earn = _earnings(syms, {s: m[2] for s, m in members.items()}, day)
+    figures = {}
+    for s in syms:
+        prof = profile(hist.get(s) or [], hist.get("SPY")) or {}
+        figures[s] = {
+            "vs_sma200": prof.get("vs_sma200"),
+            "earnings": (earn.get(s) or {}).get("next"),
+        }
+    files = _screen_files(screens)
+    candidates = set(json.loads(files[-1].read_text()).get("candidates") or []) if files else None
+    within = limits.get("earnings_within_days")
+    notes = watch_events(watch, figures, candidates, int(within) if within is not None else None)
+    try:
+        save_watch(path, watch)
+    except OSError:
+        pass
+    return notes
+
+
+def _enrich_candidates(
+    rows: list[dict[str, Any]], bars: dict[str, Any], members: dict[str, Any], day: date
+) -> None:
+    """Beta, one-year drawdown and next-earnings estimate for the weekly candidates."""
+    from us_stock_research.trading.stock_analysis import profile
+
+    spy = [(b.day, b.close) for b in bars.get("SPY") or [] if b.day <= day]
+    earn = _earnings(
+        [r["symbol"] for r in rows],
+        {r["symbol"]: members[r["symbol"]][2] for r in rows if r["symbol"] in members},
+        day,
+    )
+    for r in rows:
+        series = [(b.day, b.close) for b in bars.get(r["symbol"]) or [] if b.day <= day]
+        prof = profile(series, spy) or {}
+        r["beta"], r["max_dd"] = prof.get("beta"), prof.get("max_dd_1y")
+        r["earnings"] = (earn.get(r["symbol"]) or {}).get("next")
+
+
 def _screen_files(folder: Path) -> list[Path]:
     return sorted(folder.glob("screen_*.json")) if folder.exists() else []
 
@@ -888,12 +1012,22 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
     p.add_argument("--day", type=date.fromisoformat)
     p.add_argument("--screens", type=Path, default=Path("artifacts/stocks"))
     sub.add_parser("report")
+    p = sub.add_parser("watch")
+    p.add_argument("action", choices=("add", "rm", "list"))
+    p.add_argument("symbols", nargs="*")
+    p.add_argument("--note", default="")
     p = sub.add_parser("screen")
     p.add_argument("--out-dir", type=Path, default=Path("artifacts/stocks"))
     p.add_argument("--day", type=date.fromisoformat)
+    p.add_argument(
+        "--adhoc",
+        action="store_true",
+        help="on-demand run: write adhoc_<day>.md (not part of the weekly comparison) and print it",
+    )
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     path, fills, limits = Path(cfg["ledger"]), Path(cfg["fills"]), cfg.get("alerts") or {}
+    watch_path = Path(cfg.get("watchlist", "portfolio/stocks/watchlist.yml"))
     try:
         if args.cmd == "init":
             init(path, args.cash, datetime.now(UTC).date())
@@ -978,14 +1112,42 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
             print(f"{args.symbol.upper()} 股数 ×{args.ratio:g}，成本总额不变")
         elif args.cmd == "show":
             print(yaml.safe_dump(load(path), allow_unicode=True, sort_keys=False))
+        elif args.cmd == "watch":
+            from us_stock_research.trading.stock_analysis import load_watch, save_watch
+
+            watch = load_watch(watch_path)
+            syms = [x.upper().replace(".", "-") for x in args.symbols]
+            bad = [x for x in syms if not x.replace("-", "").isalnum() or len(x) > 10]
+            if bad:
+                raise ValueError(f"代码格式不对：{'、'.join(bad)}")
+            if args.action == "add":
+                if not syms:
+                    raise ValueError("用法：watch add 代码 [代码 ...] [--note 备注]")
+                if len(set(watch) | set(syms)) > 50:
+                    raise ValueError("观察清单最多 50 只")
+                today = datetime.now(UTC).date().isoformat()
+                for x in syms:
+                    watch.setdefault(x, {"added": today})
+                    if args.note:
+                        watch[x]["note"] = args.note
+                save_watch(watch_path, watch)
+                print(f"已加入观察清单：{'、'.join(syms)}（共 {len(watch)} 只）")
+            elif args.action == "rm":
+                gone = [x for x in syms if watch.pop(x, None) is not None]
+                save_watch(watch_path, watch)
+                print(f"已移出：{'、'.join(gone) or '无'}（共 {len(watch)} 只）")
+            else:
+                print(render_watch(watch))
         elif args.cmd == "monitor":
+            day = _last_session()
+            watch_notes = _watch_monitor(watch_path, day, limits, args.output.parent)
             if not path.exists():
-                print("个股板块：未建账本")
+                warn = f"；提醒：{'；'.join(watch_notes)}" if watch_notes else ""
+                print(f"个股板块：未建账本{warn}")
                 return 0
             from us_stock_research.trading.stock_analysis import deposits_of, shadow_spy
 
             ledger = load(path)
-            day = _last_session()
             held = list((ledger.get("positions") or {}).keys())
             prices = _latest_raw_closes(held, day)
             v = valuation(ledger, prices)
@@ -993,6 +1155,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
             notes = alerts(ledger, v, limits)
             notes += holding_alerts(v["rows"], limits)
             notes += _short_alerts(held, day, limits)
+            notes += watch_notes
             ledger["peak_nav_usd"] = round(max(float(ledger.get("peak_nav_usd") or 0), v["nav"]), 2)
             spy = _spy_adj(day)
             bench_ret, shadow = None, None
@@ -1087,6 +1250,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
                     position=position,
                     limits=limits,
                     crowded_share=float(limits.get("short_crowded_share", 0.10)),
+                    watched=_load_watch(watch_path).get(sym),
                 ),
                 end="",
             )
@@ -1121,14 +1285,31 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 - one 
             result = screen(series, meta, cfg["screen"], held_set, short)
             bench = screen_metrics(spy_closes, cfg["screen"]) if spy_closes else None
             picked = [r["symbol"] for r in result["candidates"]]
+            _enrich_candidates(result["candidates"], bars, members, day)
             args.out_dir.mkdir(parents=True, exist_ok=True)
-            prev = _previous_screen(args.out_dir, day)
+            prev = None if args.adhoc else _previous_screen(args.out_dir, day)
             changes = screen_changes(picked, prev["candidates"] if prev else None)
             checks = holding_checks(sorted(held_set), result["rows"], picked, result["vol_cut"])
-            out = args.out_dir / f"screen_{day.isoformat()}.md"
-            out.write_text(
-                render_screen(result, day, bench, changes, checks, prev["day"] if prev else None)
+            watched = sorted(_load_watch(watch_path))
+            wchecks = holding_checks(watched, result["rows"], picked, result["vol_cut"])
+            name = f"adhoc_{day.isoformat()}.md" if args.adhoc else f"screen_{day.isoformat()}.md"
+            out = args.out_dir / name
+            md = render_screen(
+                result,
+                day,
+                bench,
+                changes,
+                checks,
+                prev["day"] if prev else None,
+                wchecks,
+                int(cfg["screen"].get("earnings_flag_days", 14)),
             )
+            if args.adhoc:
+                md = md.replace("# 个股候选清单（", "# 个股候选清单·临时重筛（", 1)
+            out.write_text(md)
+            if args.adhoc:
+                print(md)
+                return 0
             out.with_suffix(".json").write_text(
                 json.dumps(
                     {

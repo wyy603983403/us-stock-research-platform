@@ -8,6 +8,8 @@
 #   bash scripts/stocks.sh cash 3.21 "NVDA 分红（税后）"        # 分红、费用；入金/出金加 deposit：cash 2000 "追加" deposit
 #   bash scripts/stocks.sh split NVDA 10                      # 拆股（10 拆 1 填 10）
 #   bash scripts/stocks.sh look NVDA                          # 一只股票的资料页（趋势、风险、财报、空头、可买股数）
+#   bash scripts/stocks.sh watch add NVDA AAPL [备注]          # 观察清单（watch rm 代码 / watch list）；状态变化时提醒
+#   bash scripts/stocks.sh rescreen                           # 按最新收盘临时重筛一次（不影响每周那期）
 #   bash scripts/stocks.sh report                             # 按年汇总已实现盈亏、手续费、分红（记账报税用）
 #   bash scripts/stocks.sh status | show
 set -euo pipefail
@@ -39,6 +41,15 @@ case "$cmd" in
   look)  [ -n "${1:-}" ] || { echo "用法：bash scripts/stocks.sh look 代码"; exit 1; }
          run ".venv/bin/usr-stocks look --symbol $(sym "$1")" ;;
   report) run ".venv/bin/usr-stocks report" ;;
+  watch) act="${1:-list}"; shift || true
+         case "$act" in add|rm|list) ;; *) echo "用法：bash scripts/stocks.sh watch add|rm|list 代码..."; exit 1;; esac
+         syms=""; note=""
+         for a in "$@"; do
+           s=$(sym "$a")
+           if [ "$act" = add ] && [ "$s" != "$a" -o -z "$s" ]; then note=$(printf '%s' "$a" | tr -d "'\"\\$\`"); else syms="$syms $s"; fi
+         done
+         run ".venv/bin/usr-stocks watch $act $syms${note:+ --note \"$note\"}" ;;
+  rescreen) echo "按最新收盘重筛（约 1-2 分钟）…"; run ".venv/bin/usr-stocks screen --adhoc" ;;
   show)  run ".venv/bin/usr-stocks show" ;;
   *) echo "未知命令 $cmd"; exit 1 ;;
 esac

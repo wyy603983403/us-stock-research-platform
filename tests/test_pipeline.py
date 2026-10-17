@@ -2832,6 +2832,8 @@ def test_stocks_look_page() -> None:
     for text in ("不是买入建议", "Aaa Inc", "90% 百分位", "最拥挤", "2026-08-27",
                  "候选第 3 位", "已持有 2 股", "约 4 股"):  # fmt: skip
         assert text in md, text
+    seen = st.render_look("ZZZ", prof, None, watched={"added": "2026-10-17", "note": "等回调"})
+    assert "在观察清单中（2026-10-17 加入，备注：等回调）" in seen
     bare = st.render_look("ZZZ", prof, None)
     assert "不在当前标普 500" in bare and "没有拿到" in bare and "还没有个股账本" in bare
 
@@ -3740,3 +3742,69 @@ def test_paper_last_orders_state_pending_dead_and_rebuilt_ids() -> None:
     assert (
         ap.last_orders_state(Fake({"x": "canceled", "y": "filled"}), new, "vt_only")[0] == "other"
     )
+
+
+def test_stocks_watchlist_reminders_once_per_change(tmp_path: Path) -> None:
+    from us_stock_research.trading import stock_analysis as sa
+    from us_stock_research.trading import stocks as st
+
+    path = tmp_path / "watch.yml"
+    assert sa.load_watch(path) == {} and "空的" in st.render_watch({})
+    watch = {"AAA": {"added": "2026-10-17", "note": "芯片"}, "BBB": {"added": "2026-10-17"}}
+    sa.save_watch(path, watch)
+    watch = sa.load_watch(path)
+    earn = {"estimate": date(2026, 10, 22), "days_to": 5}
+    fig = {"AAA": {"vs_sma200": 0.05, "earnings": earn}, "BBB": {"vs_sma200": -0.02}}
+    # first check: state only for trend and screen; the earnings date is new -> one reminder
+    notes = sa.watch_events(watch, fig, {"AAA"}, 7)
+    assert notes == ["观察 AAA 预计 10-22 前后发财报（推算，5 天后）"]
+    assert watch["AAA"]["above_sma"] is True and watch["BBB"]["in_screen"] is False
+    assert sa.watch_events(watch, fig, {"AAA"}, 7) == []  # nothing changed: silent
+    fig2 = {"AAA": {"vs_sma200": -0.01, "earnings": earn}, "BBB": {"vs_sma200": 0.01}}
+    notes = sa.watch_events(watch, fig2, {"BBB"}, 7)
+    assert notes == ["观察 AAA 跌破 200 日线（-1%）", "观察 AAA 掉出每周候选清单",
+                     "观察 BBB 站上 200 日线（+1%）", "观察 BBB 进入每周候选清单"]  # fmt: skip
+    assert sa.watch_events(watch, {}, None, 7) == []  # missing figures keep the state
+    sa.save_watch(path, watch)
+    table = st.render_watch(sa.load_watch(path))
+    assert "| AAA | 2026-10-17 | 否 | 否 | 芯片 |" in table
+    # weekly screen: candidate figures and the watch table
+    res = {"eligible": 3, "trend_pool": 1, "vol_cut": 0.5, "short": None, "rows": {},
+           "candidates": [{"symbol": "AAA", "name": "a", "sector": "Tech", "momentum_12_1": 0.3,
+                           "return_6m": 0.1, "vs_sma": 0.05, "vol": 0.3, "from_high": -0.02,
+                           "held": False, "dtc": None, "crowded": False, "beta": 1.4,
+                           "max_dd": -0.18, "earnings": earn}]}  # fmt: skip
+    wl = [{"symbol": "AAA", "evaluated": True, "mom_pct": 0.95, "above_sma": True,
+           "vol_ok": True, "rank": 1}, {"symbol": "ZZZ", "evaluated": False}]  # fmt: skip
+    md = st.render_screen(res, date(2026, 10, 16), None, None, None, None, wl, 14)
+    assert "| 1.40 | -18% |" in md and "10-22 ⚠️5 天后" in md
+    assert "观察清单在本周规则下的位置" in md and "| ZZZ | — |" in md
+
+
+def test_stocks_watch_cli(tmp_path: Path) -> None:
+    import contextlib
+    import io
+
+    import yaml
+
+    from us_stock_research.trading import stocks as st
+
+    conf = tmp_path / "stocks.yml"
+    cfg = yaml.safe_load(Path("configs/stocks.yml").read_text())
+    cfg.update(ledger=str(tmp_path / "l.yml"), fills=str(tmp_path / "f.csv"),
+               watchlist=str(tmp_path / "w.yml"))  # fmt: skip
+    conf.write_text(yaml.safe_dump(cfg, allow_unicode=True))
+
+    def run(*a: str) -> tuple[int, str]:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = st.main(["--config", str(conf), "watch", *a])
+        return rc, buf.getvalue()
+
+    assert run("add", "nvda", "brk.b", "--note", "看看")[1].startswith(
+        "已加入观察清单：NVDA、BRK-B"
+    )
+    rc, out = run("list")
+    assert rc == 0 and "| BRK-B |" in out and "看看" in out
+    assert "已移出：NVDA" in run("rm", "NVDA", "XXX")[1]
+    assert run("add", "BAD$")[0] == 2 and run("add")[0] == 2

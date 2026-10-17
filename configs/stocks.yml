@@ -4,6 +4,7 @@
 # （sp500_momentum_pit_v2）2012–2025 年化 14.0%、SPY 14.5%，相对等权无显著超额。清单只是“值得看一看”的起点。
 ledger: portfolio/stocks/ledger.yml
 fills: portfolio/stocks/fills.csv
+watchlist: portfolio/stocks/watchlist.yml   # 观察清单（2026-10-17）：stocks.sh watch add/rm/list；每日检查，状态变化时提醒一次
 benchmark: SPY
 
 alerts:                          # 用户 2026-10-08 选择
@@ -23,4 +24,5 @@ screen:                          # 每周一次（周五信号日的那次运行
   drop_top_vol_share: 0.10
   top_n: 20
   max_per_sector: 5              # 同一行业最多列 5 只，避免清单全是一个行业
+  earnings_flag_days: 14         # 候选清单里预计 14 天内发财报的标 ⚠️（只标注）
   short_crowded_share: 0.10      # 清单里标出回补天数在标普 500 最高 10% 的股票（⚠️拥挤），只标注不剔除

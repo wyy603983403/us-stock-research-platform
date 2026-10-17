@@ -121,3 +121,5 @@
     （账户 buying_power 被挂单占用属正常）。改为 `order_timing: before_close`：usr-paper.timer 纽约 15:38 运行
     `usr-paper --submit --near-close`，收盘前 5–25 分钟（/v2/clock）提交市价 day 单；21:15 流水线不再发单，通知带上次提交结果。
     彩排 14/14（tools/rehearse_server.py 加入收盘前提交步骤）。
+55. 2026-10-17 个股第二轮：观察清单（usr-stocks watch，状态变化才提醒：200 日线、每周候选进出、7 天内财报）；
+    每周候选加 β/一年最大回撤/下次财报（14 天内 ⚠️）及观察清单位置表；`screen --adhoc`（stocks.sh rescreen）临时重筛。规则未改。
